@@ -95,6 +95,7 @@ export default function LiveChart() {
       width: containerRef.current.clientWidth,
       height: containerRef.current.clientHeight - 0,
       padding: [8, 12, 0, 0],
+      legend: { show: false },
       cursor: {
         show: true,
         sync: { key: 'main' },
