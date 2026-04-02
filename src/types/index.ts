@@ -62,6 +62,7 @@ export type MarkerCategory =
 export interface Marker {
   id: string;
   timestamp: number;
+  endTimestamp?: number;  // undefined = point marker; set = range marker
   label: string;
   note: string;
   category: MarkerCategory;

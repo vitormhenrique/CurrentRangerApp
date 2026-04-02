@@ -1,0 +1,49 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024" fill="none">
+  <title>CurrentRanger app icon - R monogram iteration 1</title>
+  <defs>
+    
+    <linearGradient id="bg" x1="146" y1="104" x2="864" y2="920" gradientUnits="userSpaceOnUse">
+      <stop offset="0" stop-color="#08131E"/>
+      <stop offset="1" stop-color="#12223B"/>
+    </linearGradient>
+    <radialGradient id="surfaceGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(788 210) rotate(131.2) scale(678 616)">
+      <stop offset="0" stop-color="#2563EB" stop-opacity="0.30"/>
+      <stop offset="1" stop-color="#2563EB" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="bottomGlow" cx="0" cy="0" r="1" gradientUnits="userSpaceOnUse" gradientTransform="translate(220 836) rotate(-29) scale(600 430)">
+      <stop offset="0" stop-color="#22D3EE" stop-opacity="0.11"/>
+      <stop offset="1" stop-color="#22D3EE" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="accent" x1="296" y1="264" x2="760" y2="752" gradientUnits="userSpaceOnUse">
+      <stop offset="0%" stop-color="#67E8F9"/>
+      <stop offset="52%" stop-color="#38BDF8"/>
+      <stop offset="100%" stop-color="#818CF8"/>
+    </linearGradient>
+        
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feDropShadow dx="0" dy="18" stdDeviation="28" flood-color="#020617" flood-opacity="0.38"/>
+    </filter>
+    <filter id="softGlow">
+      <feGaussianBlur stdDeviation="18" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+  <rect x="0" y="0" width="1024" height="1024" rx="248" fill="url(#bg)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="248" fill="url(#surfaceGlow)"/>
+  <rect x="0" y="0" width="1024" height="1024" rx="248" fill="url(#bottomGlow)"/>
+  <rect x="16" y="16" width="992" height="992" rx="232" stroke="#C7D2FE" stroke-opacity="0.10" stroke-width="3"/>
+  
+  <circle cx="512" cy="512" r="298" fill="#0B1324" fill-opacity="0.22"/>
+  <g filter="url(#shadow)">
+    <path d="M350 748V286H530C624 286 692 352 692 438C692 518 633 575 552 590L694 748"
+          stroke="url(#accent)" stroke-width="84" stroke-linecap="round" stroke-linejoin="round"/>
+    <path d="M350 518H546" stroke="#F8FAFC" stroke-opacity="0.22" stroke-width="14" stroke-linecap="round" stroke-dasharray="1 34"/>
+    <path d="M620 636L674 690" stroke="#FFFFFF" stroke-opacity="0.13" stroke-width="18" stroke-linecap="round"/>
+    <circle cx="350" cy="286" r="28" fill="url(#accent)" filter="url(#softGlow)"/>
+    <circle cx="694" cy="748" r="28" fill="url(#accent)" filter="url(#softGlow)"/>
+  </g>
+
+</svg>

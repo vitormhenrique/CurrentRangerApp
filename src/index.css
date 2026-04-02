@@ -114,3 +114,17 @@
     @apply border-t border-surface-200 my-2;
   }
 }
+
+/* ── uPlot overrides ──────────────────────────────────────────────────────── */
+
+/* Selection box — visible cyan highlight */
+.u-select {
+  background: rgba(34, 211, 238, 0.12) !important;
+  border-left: 1.5px solid rgba(34, 211, 238, 0.55) !important;
+  border-right: 1.5px solid rgba(34, 211, 238, 0.55) !important;
+}
+
+/* Cursor cross-hair colour */
+.u-cursor-x, .u-cursor-y {
+  border-color: rgba(166, 173, 200, 0.4) !important;
+}

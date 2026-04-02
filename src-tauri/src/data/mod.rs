@@ -39,6 +39,9 @@ impl Sample {
 pub struct Marker {
     pub id: String,
     pub timestamp: f64,
+    /// Set for range (interval) markers; absent for point markers.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub end_timestamp: Option<f64>,
     pub label: String,
     pub note: String,
     pub category: MarkerCategory,

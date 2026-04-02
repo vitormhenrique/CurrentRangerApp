@@ -1,0 +1,1 @@
+{"main-capability":{"identifier":"main-capability","description":"Main window capabilities","local":true,"windows":["main"],"permissions":["core:default","dialog:default","dialog:allow-open","dialog:allow-save","fs:allow-read-text-file","fs:allow-write-text-file","fs:allow-create","fs:allow-rename","fs:allow-exists","shell:allow-open"]}}
