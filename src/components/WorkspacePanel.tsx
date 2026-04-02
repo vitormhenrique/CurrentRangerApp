@@ -1,6 +1,7 @@
 // src/components/WorkspacePanel.tsx — Save, load, and export
 
 import { useState } from 'react';
+import { Save, FolderOpen, Download, Trash2 } from 'lucide-react';
 import { useAppStore } from '../store';
 import { api, pickSaveCsv, pickSaveJson, pickSaveWorkspace, pickOpenWorkspace } from '../api/tauri';
 
@@ -57,22 +58,22 @@ export default function WorkspacePanel() {
 
   return (
     <div className="flex items-center gap-1 flex-wrap">
-      <button className="btn btn-ghost btn-sm text-xs" onClick={saveWs} disabled={busy}>
-        💾 Save
+      <button className="btn btn-ghost btn-sm text-xs flex items-center gap-1" onClick={saveWs} disabled={busy}>
+        <Save size={12} /> Save
       </button>
-      <button className="btn btn-ghost btn-sm text-xs" onClick={loadWs} disabled={busy}>
-        📂 Open
+      <button className="btn btn-ghost btn-sm text-xs flex items-center gap-1" onClick={loadWs} disabled={busy}>
+        <FolderOpen size={12} /> Open
       </button>
       <div className="h-4 w-px bg-surface-200" />
-      <button className="btn btn-ghost btn-sm text-xs" onClick={exportCsv} disabled={busy}>
-        ↓ CSV
+      <button className="btn btn-ghost btn-sm text-xs flex items-center gap-1" onClick={exportCsv} disabled={busy}>
+        <Download size={12} /> CSV
       </button>
-      <button className="btn btn-ghost btn-sm text-xs" onClick={exportJson} disabled={busy}>
-        ↓ JSON
+      <button className="btn btn-ghost btn-sm text-xs flex items-center gap-1" onClick={exportJson} disabled={busy}>
+        <Download size={12} /> JSON
       </button>
       <div className="h-4 w-px bg-surface-200" />
       <button
-        className="btn btn-danger btn-sm text-xs"
+        className="btn btn-danger btn-sm text-xs flex items-center gap-1"
         disabled={busy}
         onClick={() => {
           if (confirm('Clear all samples?')) {
@@ -83,7 +84,7 @@ export default function WorkspacePanel() {
           }
         }}
       >
-        Clear
+        <Trash2 size={12} /> Clear
       </button>
     </div>
   );

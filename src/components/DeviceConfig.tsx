@@ -119,7 +119,7 @@ export default function DeviceConfig() {
       : '—';
 
   return (
-    <div className="h-full overflow-y-auto px-6 py-5 flex flex-col gap-6 max-w-3xl mx-auto w-full">
+    <div className="h-full overflow-y-auto px-6 py-5 flex flex-col gap-6 w-full">
       {/* Page header */}
       <div className="flex items-center gap-3">
         <div>

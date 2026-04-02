@@ -26,6 +26,16 @@ function MarkerRow({ marker }: { marker: Marker }) {
 
   const ts = new Date(marker.timestamp * 1000);
   const timeStr = ts.toISOString().substr(11, 12);
+  const isRange = marker.endTimestamp != null;
+  const durationStr = isRange
+    ? (() => {
+        const dur = marker.endTimestamp! - marker.timestamp;
+        if (dur >= 3600) return `${(dur / 3600).toFixed(2)}h`;
+        if (dur >= 60)   return `${(dur / 60).toFixed(2)}m`;
+        if (dur >= 1)    return `${dur.toFixed(3)}s`;
+        return `${(dur * 1000).toFixed(1)}ms`;
+      })()
+    : null;
 
   return (
     <div className="border border-surface-200 rounded p-2 flex flex-col gap-1">
@@ -46,7 +56,9 @@ function MarkerRow({ marker }: { marker: Marker }) {
         ) : (
           <span className="text-xs font-medium flex-1 truncate">{marker.label}</span>
         )}
-        <span className="text-xs text-text-subtle font-mono flex-none">{timeStr}</span>
+        <span className="text-xs text-text-subtle font-mono flex-none">
+          {timeStr}{durationStr && <span className="text-accent-teal ml-1">+{durationStr}</span>}
+        </span>
       </div>
 
       {editing ? (
@@ -73,7 +85,7 @@ function MarkerRow({ marker }: { marker: Marker }) {
               className="badge text-xs flex-none"
               style={{ background: marker.color + '33', color: marker.color }}
             >
-              {MARKER_LABELS[marker.category]}
+              {isRange ? '⟷ range' : MARKER_LABELS[marker.category]}
             </span>
             <div className="flex-1" />
             <button

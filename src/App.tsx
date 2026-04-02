@@ -1,6 +1,7 @@
 // src/App.tsx — Root component with layout and event wiring
 
-import { useEffect } from 'react';
+import { useEffect, type ReactNode } from 'react';
+import { LineChart, Settings } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
 import {
   api,
@@ -96,7 +97,7 @@ export default function App() {
   }: {
     view: 'monitor' | 'device-config';
     label: string;
-    icon: string;
+    icon: ReactNode;
   }) => (
     <button
       className={clsx(
@@ -107,7 +108,7 @@ export default function App() {
       )}
       onClick={() => setCurrentView(view)}
     >
-      <span>{icon}</span>
+      {icon}
       <span>{label}</span>
     </button>
   );
@@ -118,7 +119,7 @@ export default function App() {
       <header className="flex-none bg-base-200 border-b border-surface-200 px-3 h-11 flex items-center gap-3">
         {/* Logo */}
         <div className="flex items-center gap-2 flex-none">
-          <span className="text-accent-blue text-lg">⚡</span>
+          <img src="/icon.svg" className="w-5 h-5" alt="" />
           <span className="font-mono font-bold text-text text-sm tracking-tight">
             CurrentRanger
           </span>
@@ -128,8 +129,8 @@ export default function App() {
 
         {/* Navigation tabs */}
         <nav className="flex items-center gap-1">
-          <NavTab view="monitor" label="Monitor" icon="📈" />
-          <NavTab view="device-config" label="Device Config" icon="⚙" />
+          <NavTab view="monitor" label="Monitor" icon={<LineChart size={14} />} />
+          <NavTab view="device-config" label="Device Config" icon={<Settings size={14} />} />
         </nav>
 
         <div className="flex-1" />

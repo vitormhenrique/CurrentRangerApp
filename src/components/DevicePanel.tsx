@@ -1,6 +1,7 @@
 // src/components/DevicePanel.tsx — Serial connection and quick status
 
 import { useState } from 'react';
+import { RefreshCw } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from '../store';
 import { api } from '../api/tauri';
 import clsx from 'clsx';
@@ -68,7 +69,7 @@ export default function DevicePanel() {
           ))}
         </select>
         <button className="btn btn-ghost btn-sm" onClick={refreshPorts} title="Refresh ports">
-          ↻
+          <RefreshCw size={13} />
         </button>
       </div>
 
