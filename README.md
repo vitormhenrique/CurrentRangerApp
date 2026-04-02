@@ -1,5 +1,9 @@
 # CurrentRanger Desktop App
 
+[![Release](https://github.com/vitormhenrique/CurrentRangerApp/actions/workflows/release.yml/badge.svg)](https://github.com/vitormhenrique/CurrentRangerApp/actions/workflows/release.yml)
+[![Latest Release](https://img.shields.io/github/v/release/vitormhenrique/CurrentRangerApp?include_prereleases)](https://github.com/vitormhenrique/CurrentRangerApp/releases)
+[![License](https://img.shields.io/github/license/vitormhenrique/CurrentRangerApp)](LICENSE)
+
 A modern cross-platform desktop application for managing and analyzing data from a [LowPowerLab CurrentRanger](https://lowpowerlab.com/currentranger) precision current meter.
 
 Built with **Rust + Tauri v2**, **React + TypeScript**, and **uplot** for high-performance real-time charting.
