@@ -1,0 +1,54 @@
+// CurrentRanger Desktop App — lib.rs
+// Root library crate wired into Tauri.
+
+pub mod commands;
+pub mod data;
+pub mod export;
+pub mod metrics;
+pub mod protocol;
+pub mod serial;
+pub mod workspace;
+
+use commands::*;
+use data::SampleStore;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+
+/// Shared application state managed by Tauri.
+pub struct AppState {
+    pub serial: Arc<Mutex<serial::SerialManager>>,
+    /// Arc so the reader task can push samples directly.
+    pub store: Arc<Mutex<SampleStore>>,
+}
+
+#[cfg_attr(mobile, tauri::mobile_entry_point)]
+pub fn run() {
+    let state = AppState {
+        serial: Arc::new(Mutex::new(serial::SerialManager::new())),
+        store: Arc::new(Mutex::new(SampleStore::new())),
+    };
+
+    tauri::Builder::default()
+        .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_shell::init())
+        .manage(state)
+        .invoke_handler(tauri::generate_handler![
+            list_ports,
+            connect_device,
+            disconnect_device,
+            send_device_command,
+            get_samples,
+            get_stats,
+            clear_samples,
+            save_workspace,
+            load_workspace,
+            export_csv,
+            export_json,
+            compute_integration,
+            compute_battery_runtime,
+            compute_required_capacity,
+        ])
+        .run(tauri::generate_context!())
+        .expect("error while running tauri application");
+}

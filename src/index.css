@@ -1,0 +1,116 @@
+/* src/index.css — Global styles */
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg: #1e1e2e;
+    --surface: #313244;
+    --accent: #89b4fa;
+  }
+
+  html, body, #root {
+    @apply h-full bg-base-200 text-text font-sans;
+    font-size: 14px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  * {
+    box-sizing: border-box;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+  ::-webkit-scrollbar-track {
+    @apply bg-base-100;
+  }
+  ::-webkit-scrollbar-thumb {
+    @apply bg-surface-200 rounded;
+  }
+  ::-webkit-scrollbar-thumb:hover {
+    @apply bg-overlay;
+  }
+}
+
+@layer components {
+  .panel {
+    @apply bg-base-200 border border-surface-200 rounded-lg p-3 flex flex-col gap-2;
+  }
+
+  .panel-title {
+    @apply text-xs font-semibold uppercase tracking-widest text-text-muted mb-1;
+  }
+
+  .btn {
+    @apply inline-flex items-center justify-center gap-1.5 px-3 py-1.5 rounded text-sm font-medium
+           transition-colors duration-150 cursor-pointer select-none;
+  }
+
+  .btn-primary {
+    @apply btn bg-accent-blue text-base-100 hover:bg-blue-400 active:bg-blue-500;
+  }
+
+  .btn-ghost {
+    @apply btn bg-transparent text-text-muted border border-surface-200 hover:bg-surface hover:text-text;
+  }
+
+  .btn-danger {
+    @apply btn bg-accent-red/20 text-accent-red border border-accent-red/30 hover:bg-accent-red/30;
+  }
+
+  .btn-success {
+    @apply btn bg-accent-green/20 text-accent-green border border-accent-green/30 hover:bg-accent-green/30;
+  }
+
+  .btn-sm {
+    @apply px-2 py-1 text-xs;
+  }
+
+  .input {
+    @apply bg-base-100 border border-surface-200 rounded px-2 py-1 text-sm text-text
+           focus:outline-none focus:border-accent-blue w-full;
+  }
+
+  .select {
+    @apply input appearance-none cursor-pointer;
+  }
+
+  .stat-label {
+    @apply text-xs text-text-subtle uppercase tracking-wider;
+  }
+
+  .stat-value {
+    @apply font-mono font-semibold text-text;
+  }
+
+  .stat-value-big {
+    @apply font-mono font-bold text-2xl text-accent-teal;
+  }
+
+  .badge {
+    @apply inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-xs font-medium;
+  }
+
+  .badge-connected {
+    @apply badge bg-accent-green/20 text-accent-green;
+  }
+
+  .badge-disconnected {
+    @apply badge bg-surface text-text-muted;
+  }
+
+  .badge-error {
+    @apply badge bg-accent-red/20 text-accent-red;
+  }
+
+  .badge-connecting {
+    @apply badge bg-accent-yellow/20 text-accent-yellow;
+  }
+
+  .divider {
+    @apply border-t border-surface-200 my-2;
+  }
+}
