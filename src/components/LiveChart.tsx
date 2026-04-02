@@ -4,15 +4,16 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from 'react
 import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useAppStore, getOrderedSlice } from '../store';
-import { formatCurrentShort } from '../types';
+import { formatCurrentShort, MARKER_COLORS, MARKER_LABELS, MarkerCategory } from '../types';
 import clsx from 'clsx';
 
 const CHART_BG = '#181825';
 const GRID_COLOR = 'rgba(69,71,90,0.5)';
 const TRACE_COLOR = '#89dceb';
 const AVG_COLOR = '#f9e2af';
-
 const TICK_COLOR = '#a6adc8';
+
+const QUICK_CATEGORIES: MarkerCategory[] = ['note', 'boot', 'idle', 'sleep', 'radioTx', 'sensorSample'];
 
 const TIME_WINDOWS = [
   { label: '5s', value: 5 },
@@ -45,9 +46,20 @@ export default function LiveChart() {
     setViewStats,
     setSelectionStats,
     setSelectionRange,
+    addMarker,
   } = useAppStore();
 
   const [liveValue, setLiveValue] = useState<number | null>(null);
+
+  // Marker popup state
+  const [markerPopup, setMarkerPopup] = useState<{
+    x: number;   // px from left of container
+    y: number;   // px from top of container
+    ts: number;  // unix timestamp
+  } | null>(null);
+  const [markerLabel, setMarkerLabel] = useState('');
+  const [markerCategory, setMarkerCategory] = useState<MarkerCategory>('note');
+  const markerInputRef = useRef<HTMLInputElement>(null);
 
   // ── Chart initialisation ─────────────────────────────────────────────────
 
@@ -150,8 +162,33 @@ export default function LiveChart() {
     });
     ro.observe(containerRef.current);
 
+    // Click on chart → open marker popup
+    const canvas = containerRef.current.querySelector('canvas');
+    const handleCanvasClick = (e: MouseEvent) => {
+      // Ignore if user was dragging (selection)
+      const sel = u.select;
+      if (sel.width > 4) return;
+
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const ts = u.posToVal(px, 'x');
+      if (!isFinite(ts)) return;
+
+      const containerRect = containerRef.current!.getBoundingClientRect();
+      setMarkerPopup({
+        x: e.clientX - containerRect.left,
+        y: e.clientY - containerRect.top,
+        ts,
+      });
+      setMarkerLabel('');
+      setMarkerCategory('note');
+      setTimeout(() => markerInputRef.current?.focus(), 50);
+    };
+    canvas?.addEventListener('click', handleCanvasClick);
+
     return () => {
       ro.disconnect();
+      canvas?.removeEventListener('click', handleCanvasClick);
       u.destroy();
       plotRef.current = null;
     };
@@ -285,6 +322,18 @@ export default function LiveChart() {
     if (paused) renderFrame();
   }, [paused]);
 
+  const confirmMarker = () => {
+    if (!markerPopup) return;
+    addMarker({
+      timestamp: markerPopup.ts,
+      label: markerLabel || MARKER_LABELS[markerCategory],
+      note: '',
+      category: markerCategory,
+      color: MARKER_COLORS[markerCategory],
+    });
+    setMarkerPopup(null);
+  };
+
   return (
     <div className="panel flex-1 overflow-hidden flex flex-col">
       {/* Toolbar */}
@@ -321,12 +370,65 @@ export default function LiveChart() {
         </button>
       </div>
 
-      {/* uPlot container */}
-      <div
-        ref={containerRef}
-        className="flex-1 overflow-hidden rounded"
-        style={{ background: CHART_BG, minHeight: 200 }}
-      />
+      {/* uPlot container — relative for popup positioning */}
+      <div className="flex-1 overflow-hidden rounded relative">
+        <div
+          ref={containerRef}
+          className="w-full h-full"
+          style={{ background: CHART_BG }}
+        />
+
+        {/* Marker add popup */}
+        {markerPopup && (
+          <div
+            className="absolute z-50 bg-base-200 border border-surface-200 rounded-lg shadow-lg p-3 flex flex-col gap-2 w-56"
+            style={{
+              left: Math.min(markerPopup.x + 8, (containerRef.current?.clientWidth ?? 400) - 232),
+              top: Math.max(markerPopup.y - 8, 4),
+            }}
+          >
+            <div className="text-xs text-text-subtle font-mono">
+              + Marker at {new Date(markerPopup.ts * 1000).toISOString().substr(11, 12)}
+            </div>
+            <input
+              ref={markerInputRef}
+              className="input text-xs"
+              placeholder="Label (optional)…"
+              value={markerLabel}
+              onChange={(e) => setMarkerLabel(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') confirmMarker();
+                if (e.key === 'Escape') setMarkerPopup(null);
+              }}
+            />
+            <div className="flex gap-1 flex-wrap">
+              {QUICK_CATEGORIES.map((cat) => (
+                <button
+                  key={cat}
+                  className={clsx(
+                    'text-xs rounded px-1.5 py-0.5 transition-colors',
+                    markerCategory === cat
+                      ? 'text-base-100'
+                      : 'bg-surface text-text-muted hover:text-text',
+                  )}
+                  style={markerCategory === cat ? { background: MARKER_COLORS[cat] } : {}}
+                  onClick={() => setMarkerCategory(cat)}
+                >
+                  {MARKER_LABELS[cat]}
+                </button>
+              ))}
+            </div>
+            <div className="flex gap-1">
+              <button className="btn btn-primary btn-sm flex-1 text-xs" onClick={confirmMarker}>
+                Add
+              </button>
+              <button className="btn btn-ghost btn-sm text-xs" onClick={() => setMarkerPopup(null)}>
+                ✕
+              </button>
+            </div>
+          </div>
+        )}
+      </div>
     </div>
   );
 }

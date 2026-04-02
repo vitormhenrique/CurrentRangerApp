@@ -212,28 +212,3 @@ export default function App() {
     </div>
   );
 }
-
-          <DevicePanel />
-          <div className="divider" />
-          <IntegrationPanel />
-          <div className="divider" />
-          <BatteryTools />
-        </aside>
-
-        {/* Centre: chart + stats */}
-        <main className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
-          <LiveChart />
-          <StatsPanel />
-        </main>
-
-        {/* Right sidebar */}
-        <aside className="flex-none w-64 flex flex-col p-2 border-l border-surface-200 overflow-y-auto">
-          <MarkersPanel />
-        </aside>
-      </div>
-
-      {/* Status bar */}
-      <StatusBar />
-    </div>
-  );
-}
