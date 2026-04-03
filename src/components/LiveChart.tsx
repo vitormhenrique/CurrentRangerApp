@@ -228,9 +228,31 @@ export default function LiveChart() {
         setCursor: [
           (u) => {
             const left = (u.cursor as { left?: number }).left;
-            if (left != null && left >= 0) {
-              const ts = u.posToVal(left, 'x');
-              if (isFinite(ts)) cursorTsRef.current = ts;
+            if (left == null || left < 0) return;
+            const ts = u.posToVal(left, 'x');
+            if (!isFinite(ts)) return;
+            cursorTsRef.current = ts;
+
+            // When paused, show the value under the cursor in the live readout.
+            // Use uPlot's data arrays (already downsampled) for a fast lookup.
+            if (pausedRef.current) {
+              const data = u.data;
+              const xArr = data[0] as number[];
+              const yArr = data[1] as (number | null)[];
+              if (!xArr || xArr.length === 0) return;
+              // Binary search for the closest timestamp
+              let lo = 0, hi = xArr.length - 1;
+              while (lo < hi) {
+                const mid = (lo + hi) >> 1;
+                if (xArr[mid] < ts) lo = mid + 1; else hi = mid;
+              }
+              // Check lo and lo-1 for the nearest
+              let best = lo;
+              if (lo > 0 && Math.abs(xArr[lo - 1] - ts) < Math.abs(xArr[lo] - ts)) best = lo - 1;
+              const val = yArr[best];
+              if (val != null && isFinite(val)) {
+                setLiveValue(val);
+              }
             }
           },
         ],
@@ -469,7 +491,12 @@ export default function LiveChart() {
 
     // If buffer is empty (e.g. after Clear), reset the chart and minimap
     if (n === 0) {
+      programmaticScale.current = true;
+      u.setData([[0], [null]] as uPlot.AlignedData, false);
+      u.setScale('x', { min: 0, max: 1 });
+      u.setScale('y', { min: 0, max: 1 });
       u.setData([[], []], false);
+      programmaticScale.current = false;
       setLiveValue(null);
       setViewStats(null);
       viewportRef.current = null;
@@ -651,11 +678,11 @@ export default function LiveChart() {
     if (paused || currentView === 'monitor') renderFrame();
   }, [paused, renderFrame, currentView]);
 
-  // Re-render when samples are cleared (totalSamples drops to 0)
-  const totalSamples = useAppStore((s) => s.totalSamples);
+  // Re-render when samples are explicitly cleared
+  const clearGeneration = useAppStore((s) => s.clearGeneration);
   useEffect(() => {
-    if (totalSamples === 0) renderFrame();
-  }, [totalSamples, renderFrame]);
+    if (clearGeneration > 0) renderFrame();
+  }, [clearGeneration, renderFrame]);
 
   // Navigate to a marker timestamp when requested from MarkersPanel
   const navigateTo = useAppStore((s) => s.navigateTo);
@@ -693,6 +720,10 @@ export default function LiveChart() {
     }
     setMarkerError(false);
     setMarkerPopup(null);
+    // Clear the drag selection so only the saved marker remains
+    setSelectionRange(null);
+    setSelectionStats(null);
+    plotRef.current?.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
   };
 
   // ── React-level pointer handlers (bypass native WebView context menu) ──────

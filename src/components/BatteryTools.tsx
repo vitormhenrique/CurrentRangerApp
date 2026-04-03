@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { api } from '../api/tauri';
-import { BatteryRuntimeResult, RequiredCapacityResult, formatDuration } from '../types';
+import { BatteryRuntimeResult, RequiredCapacityResult, formatCurrentShort, formatDuration } from '../types';
 import { useAppStore } from '../store';
 
 interface DeratInputs {
@@ -43,7 +43,6 @@ function DeratRow({
 
 export default function BatteryTools() {
   const { viewStats, selectionStats, selectionRange } = useAppStore();
-  // Prefer selection stats when a range is active, otherwise fall back to full view
   const activeStats = selectionRange ? selectionStats : viewStats;
   const [mode, setMode] = useState<'runtime' | 'capacity'>('runtime');
   const [capacityMah, setCapacityMah] = useState(1000);
@@ -58,7 +57,8 @@ export default function BatteryTools() {
   const [capacityResult, setCapacityResult] = useState<RequiredCapacityResult | null>(null);
   const [error, setError] = useState('');
 
-  const avgCurrentAmps = manualCurrentMa
+  const isManual = !!manualCurrentMa;
+  const avgCurrentAmps = isManual
     ? Number(manualCurrentMa) / 1000
     : (activeStats?.avgAmps ?? 0);
 
@@ -93,7 +93,15 @@ export default function BatteryTools() {
 
   return (
     <div className="panel">
-      <div className="panel-title">Battery Tools</div>
+      {/* Title with selection badge */}
+      <div className="flex items-center gap-1.5">
+        <span className="panel-title">Battery Tools</span>
+        {selectionRange && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-accent-teal/15 text-accent-teal">
+            selection
+          </span>
+        )}
+      </div>
 
       {/* Mode toggle */}
       <div className="flex gap-1">
@@ -112,24 +120,33 @@ export default function BatteryTools() {
       </div>
 
       {/* Current source */}
-      <div className="flex items-center gap-2">
-        <label className="text-xs text-text-subtle flex-1">
-          Current (mA)
-          {activeStats && !manualCurrentMa && (
-            <span className={`ml-1 ${selectionRange ? 'text-accent-teal' : 'text-accent-green'}`}>
-              {selectionRange ? '← selection' : '← chart'}
+      <div className="flex flex-col gap-1">
+        <div className="flex items-center gap-2">
+          <label className="text-xs text-text-subtle flex-1">Current (mA)</label>
+          <input
+            type="number"
+            className="input text-xs w-24"
+            placeholder="auto"
+            value={manualCurrentMa}
+            onChange={(e) => setManualCurrentMa(e.target.value)}
+            min={0}
+            step={0.001}
+          />
+        </div>
+        {/* Show the auto-resolved value when in auto mode */}
+        {!isManual && (
+          <div className="flex items-center gap-1 pl-1">
+            <span className="text-[10px] text-text-subtle">Using:</span>
+            <span className="text-[10px] font-mono text-text">
+              {activeStats?.avgAmps != null && activeStats.avgAmps > 0
+                ? formatCurrentShort(activeStats.avgAmps)
+                : '—'}
             </span>
-          )}
-        </label>
-        <input
-          type="number"
-          className="input text-xs w-24"
-          placeholder="auto"
-          value={manualCurrentMa}
-          onChange={(e) => setManualCurrentMa(e.target.value)}
-          min={0}
-          step={0.001}
-        />
+            <span className={`text-[10px] font-mono ${selectionRange ? 'text-accent-teal' : 'text-accent-green'}`}>
+              {selectionRange ? '(selection)' : '(chart avg)'}
+            </span>
+          </div>
+        )}
       </div>
 
       {mode === 'runtime' ? (

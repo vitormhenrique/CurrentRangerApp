@@ -9,6 +9,7 @@ export default function WorkspacePanel() {
   const { settings, markers, appendStatusLog, loadSamplesFromBackend, setMarkers, setSettings } =
     useAppStore();
   const [busy, setBusy] = useState(false);
+  const [confirmClear, setConfirmClear] = useState(false);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -73,18 +74,23 @@ export default function WorkspacePanel() {
       </button>
       <div className="h-4 w-px bg-surface-200" />
       <button
-        className="btn btn-danger btn-sm text-xs flex items-center gap-1"
+        className={`btn btn-sm text-xs flex items-center gap-1 ${confirmClear ? 'btn-danger animate-pulse' : 'btn-danger'}`}
         disabled={busy}
         onClick={() => {
-          if (confirm('Clear all samples?')) {
-            api.clearSamples().then(() => {
-              useAppStore.getState().clearSamples();
-              appendStatusLog('Samples cleared');
-            });
+          if (!confirmClear) {
+            setConfirmClear(true);
+            // Auto-cancel after 3 seconds
+            setTimeout(() => setConfirmClear(false), 3000);
+            return;
           }
+          setConfirmClear(false);
+          api.clearSamples().then(() => {
+            useAppStore.getState().clearSamples();
+            appendStatusLog('Samples cleared');
+          });
         }}
       >
-        <Trash2 size={12} /> Clear
+        <Trash2 size={12} /> {confirmClear ? 'Confirm?' : 'Clear'}
       </button>
     </div>
   );

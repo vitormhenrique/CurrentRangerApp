@@ -1,5 +1,9 @@
 // src/components/StatusBar.tsx
+import { Coffee, BookOpen } from 'lucide-react';
 import { useAppStore } from '../store';
+
+const DONATE_URL = 'https://www.paypal.com/donate/?business=NT46DHPPPSBBU&no_recurring=0&item_name=buy+me+a+coffee&currency_code=USD';
+const DOCS_URL = 'https://github.com/vitormhenrique/CurrentRangerApp/wiki';
 
 export default function StatusBar() {
   const { connectionStatus, totalSamples, lastSampleTs, statusLog } = useAppStore();
@@ -30,6 +34,27 @@ export default function StatusBar() {
       {lastMsg && (
         <span className="text-text-subtle truncate flex-1">{lastMsg}</span>
       )}
+      <div className="flex-1" />
+      <a
+        href={DOCS_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1 text-text-subtle hover:text-accent-blue transition-colors"
+        title="Documentation"
+      >
+        <BookOpen size={11} />
+        <span>Docs</span>
+      </a>
+      <a
+        href={DONATE_URL}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="flex items-center gap-1 text-text-subtle hover:text-accent-yellow transition-colors"
+        title="Buy me a coffee"
+      >
+        <Coffee size={11} />
+        <span>Buy me a coffee</span>
+      </a>
     </footer>
   );
 }

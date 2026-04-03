@@ -89,6 +89,8 @@ export interface AppStore {
   lastSampleTs: number | null;
 
   // Chart view
+  /** Incremented on explicit clearSamples() so the chart can react. */
+  clearGeneration: number;
   paused: boolean;
   timeWindowS: number; // 0 = show all
   viewStats: SampleStats | null;
@@ -157,6 +159,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   lastSampleTs: null,
 
   // Chart
+  clearGeneration: 0,
   paused: false,
   timeWindowS: 30,
   viewStats: null,
@@ -223,7 +226,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   clearSamples: () => {
-    set({
+    set((s) => ({
       sampleBuffer: makeSampleBuffer(),
       totalSamples: 0,
       lastSampleTs: null,
@@ -231,7 +234,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       selectionStats: null,
       selectionRange: null,
       integrationResult: null,
-    });
+      clearGeneration: s.clearGeneration + 1,
+    }));
   },
 
   setPaused: (paused) => set({ paused }),
