@@ -5,7 +5,7 @@ import { LineChart, Settings } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
 import {
   api,
-  onSerialSample,
+  onSerialSampleBatch,
   onSerialStatus,
   onSerialDeviceStatus,
   onSerialStatusMessage,
@@ -28,7 +28,7 @@ export default function App() {
   const {
     setPorts,
     setConnectionStatus,
-    pushSampleEvent,
+    pushSampleBatch,
     appendStatusLog,
     currentView,
     setCurrentView,
@@ -57,7 +57,7 @@ export default function App() {
       }
 
       unlisteners.push(
-        await onSerialSample((s) => pushSampleEvent(s)),
+        await onSerialSampleBatch((batch) => pushSampleBatch(batch.timestamps, batch.amps)),
         await onSerialStatus((status) => setConnectionStatus(status)),
         await onSerialDeviceStatus((ds) => {
           setConnectionStatus({

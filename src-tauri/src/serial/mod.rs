@@ -21,9 +21,9 @@ use crate::protocol::{self, DeviceStatus, LoggingFormat, ParsedLine, StatusUpdat
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter};
-use tokio::sync::{Mutex, mpsc, watch};
+use tokio::sync::watch;
 
 pub const DEFAULT_BAUD: u32 = 230400;
 
@@ -69,7 +69,6 @@ pub fn list_serial_ports() -> Vec<PortInfo> {
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-#[serde(rename_all = "camelCase")]
 pub enum ConnectionState {
     Disconnected,
     Connecting,
@@ -106,11 +105,11 @@ pub enum ReaderCommand {
 
 pub struct SerialManager {
     pub status: ConnectionStatus,
-    /// Channel to send commands into the reader task
-    cmd_tx: Option<mpsc::Sender<ReaderCommand>>,
-    /// Watch channel for logging format (shared with reader task)
+    /// Channel to send commands into the reader thread
+    cmd_tx: Option<std::sync::mpsc::Sender<ReaderCommand>>,
+    /// Watch channel for logging format (shared with reader thread)
     format_tx: Option<watch::Sender<LoggingFormat>>,
-    reader_handle: Option<tokio::task::JoinHandle<()>>,
+    reader_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl SerialManager {
@@ -138,7 +137,7 @@ impl SerialManager {
         port_name: String,
         baud: u32,
         app: AppHandle,
-        store: Arc<Mutex<SampleStore>>,
+        store: Arc<std::sync::Mutex<SampleStore>>,
     ) -> Result<(), String> {
         if self.status.state == ConnectionState::Connected {
             self.disconnect().await;
@@ -150,11 +149,22 @@ impl SerialManager {
         self.status.error = None;
         self.emit_status(&app);
 
+        // On macOS, prefer /dev/cu.* over /dev/tty.* to avoid blocking on DCD
+        let port_name_adjusted = if cfg!(target_os = "macos") && port_name.contains("/dev/tty.") {
+            port_name.replace("/dev/tty.", "/dev/cu.")
+        } else {
+            port_name.clone()
+        };
+
         // Open port — use a blocking call in a spawn_blocking to avoid blocking the async executor
-        let port_name_clone = port_name.clone();
+        let port_name_clone = port_name_adjusted.clone();
         let port_result = tokio::task::spawn_blocking(move || {
             serialport::new(&port_name_clone, baud)
-                .timeout(Duration::from_millis(50))
+                .timeout(Duration::from_millis(100))
+                .data_bits(serialport::DataBits::Eight)
+                .stop_bits(serialport::StopBits::One)
+                .parity(serialport::Parity::None)
+                .flow_control(serialport::FlowControl::None)
                 .open()
         })
         .await;
@@ -177,21 +187,22 @@ impl SerialManager {
             }
         };
 
-        let (cmd_tx, cmd_rx) = mpsc::channel::<ReaderCommand>(64);
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<ReaderCommand>();
         let (format_tx, format_rx) = watch::channel(LoggingFormat::default());
 
-        self.cmd_tx = Some(cmd_tx.clone());
+        self.cmd_tx = Some(cmd_tx);
         self.format_tx = Some(format_tx);
         self.status.state = ConnectionState::Connected;
         self.emit_status(&app);
 
-        // Spawn the reader task
+        // Spawn a dedicated OS thread for serial I/O (blocking reads must not
+        // run on the tokio executor).
         let app_clone = app.clone();
-        let handle = tokio::spawn(reader_task(port, cmd_rx, format_rx, app_clone, store));
+        let handle = std::thread::Builder::new()
+            .name("serial-reader".into())
+            .spawn(move || reader_thread(port, cmd_rx, format_rx, app_clone, store))
+            .map_err(|e| format!("Failed to spawn reader thread: {}", e))?;
         self.reader_handle = Some(handle);
-
-        // Bootstrap: enable USB logging
-        let _ = cmd_tx.send(ReaderCommand::Send(b'u')).await;
 
         Ok(())
     }
@@ -199,21 +210,35 @@ impl SerialManager {
     /// Disconnect gracefully.
     pub async fn disconnect(&mut self) {
         if let Some(tx) = self.cmd_tx.take() {
-            let _ = tx.send(ReaderCommand::Stop).await;
+            let _ = tx.send(ReaderCommand::Stop);
         }
         if let Some(h) = self.reader_handle.take() {
-            let _ = tokio::time::timeout(Duration::from_secs(2), h).await;
+            // Join the OS thread; use spawn_blocking so we don't block tokio
+            let _ = tokio::time::timeout(
+                Duration::from_secs(2),
+                tokio::task::spawn_blocking(move || {
+                    let _ = h.join();
+                }),
+            )
+            .await;
         }
+        self.format_tx.take();
         self.status.state = ConnectionState::Disconnected;
         self.status.port = None;
         self.status.baud = None;
+        self.status.error = None;
+    }
+
+    /// Disconnect and emit status to the frontend.
+    pub async fn disconnect_and_emit(&mut self, app: &AppHandle) {
+        self.disconnect().await;
+        self.emit_status(app);
     }
 
     /// Send a single-char command to the device.
     pub async fn send_command(&self, cmd: u8) -> Result<(), String> {
         if let Some(tx) = &self.cmd_tx {
             tx.send(ReaderCommand::Send(cmd))
-                .await
                 .map_err(|e| e.to_string())?;
             Ok(())
         } else {
@@ -227,37 +252,102 @@ impl SerialManager {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Reader task (runs in tokio background)
+// Reader thread (runs on a dedicated OS thread — blocking I/O is fine here)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Long-running task that reads lines from the serial port and emits events.
-async fn reader_task(
+/// Batch event payload sent to the frontend.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SampleBatchEvent {
+    timestamps: Vec<f64>,
+    amps: Vec<f64>,
+}
+
+/// How often we flush accumulated samples to the frontend (milliseconds).
+const BATCH_INTERVAL_MS: u64 = 50;
+/// Maximum samples before we force a flush.
+const MAX_BATCH_SIZE: usize = 100;
+
+/// Long-running function executed on a dedicated OS thread.
+/// Reads serial data, parses lines, stores samples, and emits batched events.
+fn reader_thread(
     mut port: Box<dyn serialport::SerialPort>,
-    mut cmd_rx: mpsc::Receiver<ReaderCommand>,
+    cmd_rx: std::sync::mpsc::Receiver<ReaderCommand>,
     mut format_rx: watch::Receiver<LoggingFormat>,
     app: AppHandle,
-    store: Arc<Mutex<SampleStore>>,
+    store: Arc<std::sync::Mutex<SampleStore>>,
 ) {
     let mut buf = String::new();
-    let mut byte_buf = [0u8; 512];
+    let mut byte_buf = [0u8; 1024];
     let mut device_status = DeviceStatus::default();
-    let mut sample_count: u64 = 0;
+    let mut _sample_count: u64 = 0;
     let mut current_format = *format_rx.borrow();
+
+    // Batch accumulators
+    let mut batch_ts: Vec<f64> = Vec::with_capacity(128);
+    let mut batch_amps: Vec<f64> = Vec::with_capacity(128);
+    let mut last_emit = Instant::now();
+
+    // ─────────────────────────────────────────────────────────────────────
+    // USB Logging Bootstrap
+    // ─────────────────────────────────────────────────────────────────────
+
+    std::thread::sleep(Duration::from_millis(200));
+    let _ = port.clear(serialport::ClearBuffer::Input);
+
+    if let Err(e) = port.write_all(b"U") {
+        log::warn!("Failed to send USB logging query: {}", e);
+    }
+    let _ = port.flush();
+
+    std::thread::sleep(Duration::from_millis(300));
+
+    let mut bootstrap_buf = [0u8; 512];
+    let mut response = String::new();
+    loop {
+        match port.read(&mut bootstrap_buf) {
+            Ok(n) if n > 0 => {
+                response.push_str(&String::from_utf8_lossy(&bootstrap_buf[..n]));
+            }
+            _ => break,
+        }
+    }
+    log::info!("USB logging query response: {:?}", response.trim());
+
+    let usb_logging_on = response.contains("USB_LOGGING_ENABLED");
+    let usb_logging_off = response.contains("USB_LOGGING_DISABLED");
+
+    if usb_logging_off || !usb_logging_on {
+        log::info!("USB logging is OFF, enabling...");
+        if let Err(e) = port.write_all(b"u") {
+            log::warn!("Failed to enable USB logging: {}", e);
+        }
+        let _ = port.flush();
+        std::thread::sleep(Duration::from_millis(200));
+    } else {
+        log::info!("USB logging already ON");
+    }
+
+    let _ = port.clear(serialport::ClearBuffer::Input);
+
+    // ─────────────────────────────────────────────────────────────────────
+    // Main read loop
+    // ─────────────────────────────────────────────────────────────────────
 
     loop {
         // Check for incoming commands (non-blocking)
-        while let Ok(cmd) = cmd_rx.try_recv() {
-            match cmd {
-                ReaderCommand::Send(b) => {
-                    if let Err(e) = port.write_all(&[b]) {
-                        log::warn!("Serial write error: {}", e);
-                    }
-                }
-                ReaderCommand::Stop => {
-                    log::info!("Reader task stopping");
-                    return;
+        match cmd_rx.try_recv() {
+            Ok(ReaderCommand::Stop) | Err(std::sync::mpsc::TryRecvError::Disconnected) => {
+                flush_batch(&app, &mut batch_ts, &mut batch_amps);
+                log::info!("Reader thread stopping");
+                return;
+            }
+            Ok(ReaderCommand::Send(b)) => {
+                if let Err(e) = port.write_all(&[b]) {
+                    log::warn!("Serial write error: {}", e);
                 }
             }
+            Err(std::sync::mpsc::TryRecvError::Empty) => {}
         }
 
         // Check for format change
@@ -265,7 +355,7 @@ async fn reader_task(
             current_format = *format_rx.borrow_and_update();
         }
 
-        // Read available bytes
+        // Read available bytes (blocks up to the port timeout, typically 100ms)
         match port.read(&mut byte_buf) {
             Ok(0) => {}
             Ok(n) => {
@@ -282,20 +372,17 @@ async fn reader_task(
                     match &parsed {
                         ParsedLine::Sample { amps } => {
                             let sample = Sample::new(*amps);
-                            sample_count += 1;
+                            _sample_count += 1;
 
-                            // Store in Rust-side ring buffer
+                            // Push to Rust-side store (for export / stats)
                             {
-                                let mut s = store.lock().await;
+                                let mut s = store.lock().unwrap();
                                 s.push(sample.clone());
                             }
 
-                            let _ = app.emit("serial:sample", &sample);
-
-                            // Emit periodic count update
-                            if sample_count % 100 == 0 {
-                                let _ = app.emit("serial:sample_count", sample_count);
-                            }
+                            // Accumulate for batched frontend delivery
+                            batch_ts.push(sample.timestamp);
+                            batch_amps.push(sample.amps);
                         }
                         ParsedLine::StatusUpdate { update } => {
                             apply_status_update(&mut device_status, update);
@@ -306,7 +393,6 @@ async fn reader_task(
                             let _ = app.emit("serial:info", message);
                         }
                         ParsedLine::Unknown { raw } if !raw.is_empty() => {
-                            // Only log non-empty unknowns for debugging
                             let _ = app.emit("serial:unknown", raw);
                         }
                         _ => {}
@@ -320,6 +406,7 @@ async fn reader_task(
                 // Normal — no data right now
             }
             Err(e) => {
+                flush_batch(&app, &mut batch_ts, &mut batch_amps);
                 log::error!("Serial read error: {}", e);
                 let _ = app.emit(
                     "serial:error",
@@ -329,9 +416,27 @@ async fn reader_task(
             }
         }
 
-        // Yield briefly to not spin at 100% CPU
-        tokio::time::sleep(Duration::from_millis(1)).await;
+        // Flush batch when enough samples collected or enough time elapsed
+        if !batch_ts.is_empty()
+            && (batch_ts.len() >= MAX_BATCH_SIZE
+                || last_emit.elapsed() >= Duration::from_millis(BATCH_INTERVAL_MS))
+        {
+            flush_batch(&app, &mut batch_ts, &mut batch_amps);
+            last_emit = Instant::now();
+        }
     }
+}
+
+/// Emit a batch of samples to the frontend and clear the accumulators.
+fn flush_batch(app: &AppHandle, batch_ts: &mut Vec<f64>, batch_amps: &mut Vec<f64>) {
+    if batch_ts.is_empty() {
+        return;
+    }
+    let event = SampleBatchEvent {
+        timestamps: batch_ts.drain(..).collect(),
+        amps: batch_amps.drain(..).collect(),
+    };
+    let _ = app.emit("serial:samples_batch", &event);
 }
 
 /// Apply a status update to the device status snapshot.

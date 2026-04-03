@@ -16,6 +16,8 @@ export default function DevicePanel() {
     setPorts,
     appendStatusLog,
     setCurrentView,
+    connectionStatus,
+    setConnectionStatus,
   } = useAppStore();
 
   const isConnected = useAppStore(selectIsConnected);
@@ -37,6 +39,10 @@ export default function DevicePanel() {
       } else {
         await api.connectDevice(selectedPort, baud);
         appendStatusLog(`Connected to ${selectedPort}`);
+        // Query device config after connection settles
+        setTimeout(async () => {
+          try { await api.sendDeviceCommand('?'); } catch { /* ignore */ }
+        }, 800);
       }
     } catch (e: unknown) {
       appendStatusLog(`Error: ${e}`);
@@ -47,6 +53,20 @@ export default function DevicePanel() {
 
   const send = async (cmd: string) => {
     try { await api.sendDeviceCommand(cmd); } catch { /* ignore */ }
+  };
+
+  // Optimistic toggle for commands with no serial feedback
+  const sendToggle = async (cmd: string, key: string) => {
+    try {
+      await api.sendDeviceCommand(cmd);
+      const current = (deviceStatus as Record<string, unknown>)[key];
+      if (typeof current === 'boolean' || current == null) {
+        setConnectionStatus({
+          ...connectionStatus,
+          deviceStatus: { ...deviceStatus, [key]: !(current ?? false) },
+        });
+      }
+    } catch { /* ignore */ }
   };
 
   return (
@@ -166,7 +186,7 @@ export default function DevicePanel() {
             <button className="btn btn-ghost btn-sm flex-1 font-mono text-xs" onClick={() => send('3')} title="Force nA">nA</button>
             <button
               className={clsx('btn btn-sm flex-1 text-xs', deviceStatus.autorangeEnabled ? 'btn-primary' : 'btn-ghost')}
-              onClick={() => send('6')}
+              onClick={() => sendToggle('6', 'autorangeEnabled')}
               title="Toggle autoranging"
             >
               Auto
@@ -177,14 +197,14 @@ export default function DevicePanel() {
           <div className="flex gap-1">
             <button
               className={clsx('btn btn-sm flex-1 text-xs', deviceStatus.lpfEnabled ? 'btn-primary' : 'btn-ghost')}
-              onClick={() => send('4')}
+              onClick={() => sendToggle('4', 'lpfEnabled')}
               title="Toggle LPF"
             >
               LPF
             </button>
             <button
               className={clsx('btn btn-sm flex-1 text-xs', deviceStatus.biasEnabled ? 'btn-primary' : 'btn-ghost')}
-              onClick={() => send('5')}
+              onClick={() => sendToggle('5', 'biasEnabled')}
               title="Toggle BIAS"
             >
               BIAS

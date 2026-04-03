@@ -108,6 +108,15 @@ export const api = {
 // Event listeners
 // ─────────────────────────────────────────────────────────────────────────────
 
+export interface SampleBatchEvent {
+  timestamps: number[];
+  amps: number[];
+}
+
+export function onSerialSampleBatch(cb: (batch: SampleBatchEvent) => void): Promise<UnlistenFn> {
+  return listen<SampleBatchEvent>('serial:samples_batch', (e) => cb(e.payload));
+}
+
 export function onSerialSample(cb: (sample: Sample) => void): Promise<UnlistenFn> {
   return listen<Sample>('serial:sample', (e) => cb(e.payload));
 }

@@ -74,7 +74,7 @@ function Badge({ label, color }: { label: string; color?: string }) {
 export default function DeviceConfig() {
   const isConnected = useAppStore(selectIsConnected);
   const deviceStatus = useAppStore(selectDeviceStatus);
-  const { appendStatusLog } = useAppStore();
+  const { appendStatusLog, setConnectionStatus, connectionStatus } = useAppStore();
 
   const [calibBusy, setCalibBusy] = useState(false);
   const [confirmReset, setConfirmReset] = useState(false);
@@ -83,6 +83,24 @@ export default function DeviceConfig() {
     if (!isConnected) return;
     try {
       await api.sendDeviceCommand(cmd);
+    } catch (e) {
+      appendStatusLog(`Error: ${e}`);
+    }
+  };
+
+  // Send command + optimistically toggle a device status boolean
+  const sendToggle = async (cmd: string, key: keyof typeof deviceStatus) => {
+    if (!isConnected) return;
+    try {
+      await api.sendDeviceCommand(cmd);
+      // Optimistic update for toggles that don't emit serial feedback
+      const current = deviceStatus[key];
+      if (typeof current === 'boolean' || current == null) {
+        setConnectionStatus({
+          ...connectionStatus,
+          deviceStatus: { ...deviceStatus, [key]: !(current ?? false) },
+        });
+      }
     } catch (e) {
       appendStatusLog(`Error: ${e}`);
     }
@@ -180,7 +198,7 @@ export default function DeviceConfig() {
           <span className="text-xs text-text-subtle font-mono">{rangeLabel}</span>
           <ToggleButton
             active={deviceStatus.autorangeEnabled}
-            onClick={() => send('6')}
+            onClick={() => sendToggle('6', 'autorangeEnabled')}
             disabled={!isConnected}
           />
         </Row>
@@ -191,7 +209,7 @@ export default function DeviceConfig() {
         >
           <ToggleButton
             active={deviceStatus.lpfEnabled}
-            onClick={() => send('4')}
+            onClick={() => sendToggle('4', 'lpfEnabled')}
             disabled={!isConnected}
           />
         </Row>
@@ -202,7 +220,7 @@ export default function DeviceConfig() {
         >
           <ToggleButton
             active={deviceStatus.biasEnabled}
-            onClick={() => send('5')}
+            onClick={() => sendToggle('5', 'biasEnabled')}
             disabled={!isConnected}
           />
         </Row>

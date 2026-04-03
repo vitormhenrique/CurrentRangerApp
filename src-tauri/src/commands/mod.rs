@@ -40,9 +40,9 @@ pub async fn connect_device(
 }
 
 #[tauri::command]
-pub async fn disconnect_device(state: State<'_, AppState>) -> Result<(), String> {
+pub async fn disconnect_device(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
     let mut mgr = state.serial.lock().await;
-    mgr.disconnect().await;
+    mgr.disconnect_and_emit(&app).await;
     Ok(())
 }
 
@@ -89,7 +89,7 @@ pub struct SampleBatchResponse {
 /// Return all samples. This is a bulk pull — real-time delivery uses events.
 #[tauri::command]
 pub async fn get_samples(state: State<'_, AppState>) -> Result<SampleBatchResponse, String> {
-    let store = state.store.lock().await;
+    let store = state.store.lock().unwrap();
     Ok(SampleBatchResponse {
         timestamps: store.timestamps.clone(),
         amps: store.amps.clone(),
@@ -103,7 +103,7 @@ pub async fn get_stats(
     t_end: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<SampleStats, String> {
-    let store = state.store.lock().await;
+    let store = state.store.lock().unwrap();
     Ok(match (t_start, t_end) {
         (Some(t0), Some(t1)) => store.stats_window(t0, t1),
         _ => store.stats(),
@@ -112,7 +112,7 @@ pub async fn get_stats(
 
 #[tauri::command]
 pub async fn clear_samples(state: State<'_, AppState>) -> Result<(), String> {
-    let mut store = state.store.lock().await;
+    let mut store = state.store.lock().unwrap();
     store.clear();
     Ok(())
 }
@@ -134,15 +134,19 @@ pub async fn save_workspace(
     request: SaveWorkspaceRequest,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let store = state.store.lock().await;
+    // Lock store briefly (std Mutex — don't hold across await)
+    let (samples, stats) = {
+        let store = state.store.lock().unwrap();
+        let samples: Vec<crate::workspace::SampleRecord> = store
+            .timestamps
+            .iter()
+            .zip(store.amps.iter())
+            .map(|(&t, &a)| crate::workspace::SampleRecord { t, a })
+            .collect();
+        let stats = store.stats();
+        (samples, stats)
+    };
     let mgr = state.serial.lock().await;
-
-    let samples: Vec<crate::workspace::SampleRecord> = store
-        .timestamps
-        .iter()
-        .zip(store.amps.iter())
-        .map(|(&t, &a)| crate::workspace::SampleRecord { t, a })
-        .collect();
 
     let ws = Workspace {
         schema_version: crate::workspace::CURRENT_SCHEMA_VERSION,
@@ -152,7 +156,7 @@ pub async fn save_workspace(
             samples,
             markers: request.markers,
             device_status: mgr.status.device_status.clone(),
-            stats: Some(store.stats()),
+            stats: Some(stats),
         },
     };
 
@@ -184,7 +188,7 @@ pub async fn load_workspace(
 
     // Load samples into store
     {
-        let mut store = state.store.lock().await;
+        let mut store = state.store.lock().unwrap();
         store.clear();
         for (&t, &a) in timestamps.iter().zip(amps.iter()) {
             store.timestamps.push(t);
@@ -213,7 +217,7 @@ pub async fn export_csv(
     voltage_v: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let store = state.store.lock().await;
+    let store = state.store.lock().unwrap();
     let samples: Vec<crate::workspace::SampleRecord> = store
         .timestamps
         .iter()
@@ -230,7 +234,7 @@ pub async fn export_json(
     voltage_v: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
-    let store = state.store.lock().await;
+    let store = state.store.lock().unwrap();
     let samples: Vec<crate::workspace::SampleRecord> = store
         .timestamps
         .iter()

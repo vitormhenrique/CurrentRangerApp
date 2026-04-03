@@ -115,6 +115,7 @@ export interface AppStore {
   setSelectedPort: (port: string) => void;
   setConnectionStatus: (status: ConnectionStatus) => void;
   pushSampleEvent: (sample: Sample) => void;
+  pushSampleBatch: (timestamps: number[], amps: number[]) => void;
   loadSamplesFromBackend: (timestamps: number[], amps: number[]) => void;
   clearSamples: () => void;
   setPaused: (paused: boolean) => void;
@@ -181,6 +182,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     // Mutate buffer directly for perf (no React re-render from this update)
     pushSample(state.sampleBuffer, sample.timestamp, sample.amps);
     set({ totalSamples: state.totalSamples + 1, lastSampleTs: sample.timestamp });
+  },
+
+  pushSampleBatch: (timestamps, amps) => {
+    const state = get();
+    const n = Math.min(timestamps.length, amps.length);
+    for (let i = 0; i < n; i++) {
+      pushSample(state.sampleBuffer, timestamps[i], amps[i]);
+    }
+    if (n > 0) {
+      set({ totalSamples: state.totalSamples + n, lastSampleTs: timestamps[n - 1] });
+    }
   },
 
   loadSamplesFromBackend: (timestamps, amps) => {

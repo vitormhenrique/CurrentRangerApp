@@ -12,20 +12,20 @@ pub mod workspace;
 use commands::*;
 use data::SampleStore;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::Mutex as TokioMutex;
 
 /// Shared application state managed by Tauri.
 pub struct AppState {
-    pub serial: Arc<Mutex<serial::SerialManager>>,
-    /// Arc so the reader task can push samples directly.
-    pub store: Arc<Mutex<SampleStore>>,
+    pub serial: Arc<TokioMutex<serial::SerialManager>>,
+    /// Arc so the reader thread can push samples directly.
+    pub store: Arc<std::sync::Mutex<SampleStore>>,
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let state = AppState {
-        serial: Arc::new(Mutex::new(serial::SerialManager::new())),
-        store: Arc::new(Mutex::new(SampleStore::new())),
+        serial: Arc::new(TokioMutex::new(serial::SerialManager::new())),
+        store: Arc::new(std::sync::Mutex::new(SampleStore::new())),
     };
 
     tauri::Builder::default()

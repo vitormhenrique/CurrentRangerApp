@@ -197,6 +197,63 @@ pub fn parse_line(raw: &str, format: LoggingFormat) -> ParsedLine {
                 };
             }
         }
+        // Parse "LoggingFormat=N" where N is 0-4
+        if let Some(stripped) = line.strip_prefix("LoggingFormat=") {
+            let fmt = match stripped.trim() {
+                "0" => Some(LoggingFormat::Exponent),
+                "1" => Some(LoggingFormat::Nanos),
+                "2" => Some(LoggingFormat::Micros),
+                "3" => Some(LoggingFormat::Millis),
+                "4" => Some(LoggingFormat::Adc),
+                _ => None,
+            };
+            if let Some(f) = fmt {
+                return ParsedLine::StatusUpdate {
+                    update: StatusUpdate::LoggingFormat { format: f },
+                };
+            }
+        }
+        // Parse "ADCSamplingSpeed=N" where N is 0-2
+        if let Some(stripped) = line.strip_prefix("ADCSamplingSpeed=") {
+            let spd = match stripped.trim() {
+                "0" => Some(AdcSamplingSpeed::Avg),
+                "1" => Some(AdcSamplingSpeed::Fast),
+                "2" => Some(AdcSamplingSpeed::Slow),
+                _ => None,
+            };
+            if let Some(s) = spd {
+                return ParsedLine::StatusUpdate {
+                    update: StatusUpdate::AdcSamplingSpeed { speed: s },
+                };
+            }
+        }
+        // Parse "AutoOff=DISABLED|SMART|<number>"
+        if let Some(stripped) = line.strip_prefix("AutoOff=") {
+            let mode = match stripped.trim() {
+                "DISABLED" => Some(AutoOff::Disabled),
+                "SMART" => Some(AutoOff::Smart),
+                _ => Some(AutoOff::Default),
+            };
+            if let Some(m) = mode {
+                return ParsedLine::StatusUpdate {
+                    update: StatusUpdate::AutoOff { mode: m },
+                };
+            }
+        }
+        // Parse "USB Logging: 0|1"
+        if let Some(stripped) = line.strip_prefix("USB Logging:") {
+            let enabled = stripped.trim() == "1";
+            return ParsedLine::StatusUpdate {
+                update: StatusUpdate::UsbLogging { enabled },
+            };
+        }
+        // Parse "BT Logging: 0|1"
+        if let Some(stripped) = line.strip_prefix("BT Logging:") {
+            let enabled = stripped.trim() == "1";
+            return ParsedLine::StatusUpdate {
+                update: StatusUpdate::BtLogging { enabled },
+            };
+        }
         return ParsedLine::Info {
             message: line.to_string(),
         };
@@ -248,8 +305,9 @@ fn try_parse_measurement(line: &str, format: LoggingFormat) -> Option<f64> {
 ///
 /// The firmware outputs this without spaces. The exponent can be negative.
 pub fn parse_exponent_format(line: &str) -> Option<f64> {
-    // Fast path: find 'E' separator (firmware uses uppercase E)
-    let e_pos = line.find('E')?;
+    // Find 'E' or 'e' separator — firmware may use either case depending on
+    // version/format (e.g. "1234E-6" or "-0.40e-3")
+    let e_pos = line.find('E').or_else(|| line.find('e'))?;
     let mantissa_str = &line[..e_pos];
     let exp_str = &line[e_pos + 1..];
 
