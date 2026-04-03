@@ -109,6 +109,8 @@ export interface AppStore {
 
   // Navigation
   currentView: 'monitor' | 'device-config';
+  /** Set by MarkersPanel to ask LiveChart to jump to a timestamp range. Cleared after consumption. */
+  navigateTo: { tMin: number; tMax: number } | null;
 
   // Actions
   setPorts: (ports: PortInfo[]) => void;
@@ -131,6 +133,8 @@ export interface AppStore {
   removeMarker: (id: string) => void;
   setMarkers: (markers: Marker[]) => void;
 
+  navigateToMarker: (marker: Marker) => void;
+  clearNavigateTo: () => void;
   setSettings: (s: Partial<AppSettings>) => void;
   setIntegrationResult: (r: IntegrationResult | null) => void;
   appendStatusLog: (msg: string) => void;
@@ -172,6 +176,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
   integrationResult: null,
   statusLog: [],
   currentView: 'monitor',
+  navigateTo: null,
 
   // ── Actions ──────────────────────────────────────────────────────────────
 
@@ -251,6 +256,18 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   setMarkers: (markers) => set({ markers }),
+
+  navigateToMarker: (marker) => {
+    const padding = 2; // seconds of context around the marker
+    if (marker.endTimestamp != null) {
+      const dur = marker.endTimestamp - marker.timestamp;
+      const pad = Math.max(dur * 0.2, 0.5);
+      set({ navigateTo: { tMin: marker.timestamp - pad, tMax: marker.endTimestamp + pad }, paused: true, currentView: 'monitor' });
+    } else {
+      set({ navigateTo: { tMin: marker.timestamp - padding, tMax: marker.timestamp + padding }, paused: true, currentView: 'monitor' });
+    }
+  },
+  clearNavigateTo: () => set({ navigateTo: null }),
 
   setSettings: (s) => {
     set((prev) => ({ settings: { ...prev.settings, ...s } }));

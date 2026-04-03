@@ -14,13 +14,23 @@ const CATEGORIES: MarkerCategory[] = [
 ];
 
 function MarkerRow({ marker }: { marker: Marker }) {
-  const { updateMarker, removeMarker } = useAppStore();
+  const { updateMarker, removeMarker, navigateToMarker } = useAppStore();
   const [editing, setEditing] = useState(false);
   const [label, setLabel] = useState(marker.label);
   const [note, setNote] = useState(marker.note);
+  const [color, setColor] = useState(marker.color);
 
-  const save = () => {
-    updateMarker(marker.id, { label, note });
+  const startEdit = (e: React.MouseEvent) => {
+    e.stopPropagation();
+    setLabel(marker.label);
+    setNote(marker.note);
+    setColor(marker.color);
+    setEditing(true);
+  };
+
+  const save = (e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    updateMarker(marker.id, { label, note, color });
     setEditing(false);
   };
 
@@ -37,72 +47,91 @@ function MarkerRow({ marker }: { marker: Marker }) {
       })()
     : null;
 
-  return (
-    <div className="border border-surface-200 rounded p-2 flex flex-col gap-1">
-      <div className="flex items-center gap-2">
-        {/* Color swatch */}
-        <span
-          className="w-2.5 h-2.5 rounded-full flex-none"
-          style={{ background: marker.color }}
-        />
-        {editing ? (
+  if (editing) {
+    return (
+      <div
+        className="border border-accent-teal/40 rounded p-2 flex flex-col gap-1.5"
+        onClick={(e) => e.stopPropagation()}
+      >
+        {/* Color + label row */}
+        <div className="flex items-center gap-2">
+          <label
+            className="w-5 h-5 rounded-full border-2 border-surface-200 cursor-pointer hover:ring-2 hover:ring-accent-teal/40 transition-all flex-none"
+            style={{ background: color }}
+          >
+            <input
+              type="color"
+              className="sr-only"
+              value={color}
+              onChange={(e) => setColor(e.target.value)}
+            />
+          </label>
           <input
             className="input text-xs flex-1"
             value={label}
             onChange={(e) => setLabel(e.target.value)}
-            onKeyDown={(e) => e.key === 'Enter' && save()}
+            onKeyDown={(e) => { if (e.key === 'Enter') save(); if (e.key === 'Escape') setEditing(false); }}
             autoFocus
+            placeholder="Label…"
           />
-        ) : (
-          <span className="text-xs font-medium flex-1 truncate">{marker.label}</span>
-        )}
+        </div>
+        {/* Note */}
+        <textarea
+          className="input text-xs resize-none w-full"
+          rows={2}
+          value={note}
+          onChange={(e) => setNote(e.target.value)}
+          onKeyDown={(e) => { if (e.key === 'Escape') setEditing(false); }}
+          placeholder="Note…"
+        />
+        {/* Buttons */}
+        <div className="flex gap-1">
+          <button className="btn btn-primary btn-sm flex-1 text-xs" onClick={save}>Save</button>
+          <button className="btn btn-ghost btn-sm text-xs" onClick={(e) => { e.stopPropagation(); setEditing(false); }}>Cancel</button>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div
+      className="border border-surface-200 rounded p-2 flex flex-col gap-1 cursor-pointer hover:border-accent-teal/40 transition-colors"
+      onClick={() => navigateToMarker(marker)}
+    >
+      <div className="flex items-center gap-2">
+        <span
+          className="w-2.5 h-2.5 rounded-full flex-none"
+          style={{ background: marker.color }}
+        />
+        <span className="text-xs font-medium flex-1 truncate">{marker.label}</span>
         <span className="text-xs text-text-subtle font-mono flex-none">
           {timeStr}{durationStr && <span className="text-accent-teal ml-1">+{durationStr}</span>}
         </span>
       </div>
-
-      {editing ? (
-        <>
-          <textarea
-            className="input text-xs resize-none"
-            rows={2}
-            value={note}
-            onChange={(e) => setNote(e.target.value)}
-            placeholder="Note…"
-          />
-          <div className="flex gap-1">
-            <button className="btn btn-primary btn-sm flex-1" onClick={save}>Save</button>
-            <button className="btn btn-ghost btn-sm" onClick={() => setEditing(false)}>Cancel</button>
-          </div>
-        </>
-      ) : (
-        <>
-          {marker.note && (
-            <p className="text-xs text-text-muted leading-tight">{marker.note}</p>
-          )}
-          <div className="flex gap-1">
-            <span
-              className="badge text-xs flex-none"
-              style={{ background: marker.color + '33', color: marker.color }}
-            >
-              {isRange ? '⟷ range' : MARKER_LABELS[marker.category]}
-            </span>
-            <div className="flex-1" />
-            <button
-              className="btn btn-ghost btn-sm text-xs"
-              onClick={() => setEditing(true)}
-            >
-              Edit
-            </button>
-            <button
-              className="btn btn-danger btn-sm text-xs"
-              onClick={() => removeMarker(marker.id)}
-            >
-              ×
-            </button>
-          </div>
-        </>
+      {marker.note && (
+        <p className="text-xs text-text-muted leading-tight">{marker.note}</p>
       )}
+      <div className="flex gap-1">
+        <span
+          className="badge text-xs flex-none"
+          style={{ background: marker.color + '33', color: marker.color }}
+        >
+          {isRange ? '⟷ range' : MARKER_LABELS[marker.category]}
+        </span>
+        <div className="flex-1" />
+        <button
+          className="btn btn-ghost btn-sm text-xs"
+          onClick={startEdit}
+        >
+          Edit
+        </button>
+        <button
+          className="btn btn-danger btn-sm text-xs"
+          onClick={(e) => { e.stopPropagation(); removeMarker(marker.id); }}
+        >
+          ×
+        </button>
+      </div>
     </div>
   );
 }

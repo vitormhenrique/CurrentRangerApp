@@ -29,6 +29,24 @@ const TIME_WINDOWS = [
   { label: 'All', value: 0 },
 ];
 
+/** Convert any CSS color (hex or rgb) to rgba with the given alpha. */
+function colorWithAlpha(color: string, alpha: number): string {
+  // Handle hex: #rgb, #rrggbb, #rrggbbaa
+  if (color.startsWith('#')) {
+    let hex = color.slice(1);
+    if (hex.length === 3) hex = hex[0]+hex[0]+hex[1]+hex[1]+hex[2]+hex[2];
+    const r = parseInt(hex.slice(0, 2), 16);
+    const g = parseInt(hex.slice(2, 4), 16);
+    const b = parseInt(hex.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${alpha})`;
+  }
+  // Handle rgb(r,g,b) → rgba(r,g,b,alpha)
+  if (color.startsWith('rgb(')) {
+    return color.replace('rgb(', 'rgba(').replace(')', `,${alpha})`);
+  }
+  return color;
+}
+
 function formatYAxis(amps: number): string {
   const a = Math.abs(amps);
   if (a === 0) return '0';
@@ -65,6 +83,7 @@ export default function LiveChart() {
     setSelectionStats,
     setSelectionRange,
     addMarker,
+    updateMarker,
     markers,
   } = useAppStore();
 
@@ -79,16 +98,18 @@ export default function LiveChart() {
   const [yMin, setYMin] = useState('');
   const [yMax, setYMax] = useState('');
 
-  // Marker popup state
+  // Marker popup state — editId is set when right-clicking an existing marker
   const [markerPopup, setMarkerPopup] = useState<{
     x: number;
     y: number;
     ts: number;
     tsEnd?: number;
+    editId?: string; // if set, we're editing an existing marker
   } | null>(null);
   const [markerLabel,    setMarkerLabel]    = useState('');
   const [markerNote,     setMarkerNote]     = useState('');
   const [markerCategory, setMarkerCategory] = useState<MarkerCategory>('note');
+  const [markerColor,    setMarkerColor]    = useState('');
   const markerInputRef = useRef<HTMLInputElement>(null);
 
   // Sync markerPopupOpenRef with popup state
@@ -211,7 +232,7 @@ export default function LiveChart() {
                 const xL = Math.min(x0, x1);
                 const xR = Math.max(x0, x1);
                 if (xR < left || xL > left + width) continue;
-                ctx.fillStyle = color.replace(')', ',0.08)').replace('rgb', 'rgba');
+                ctx.fillStyle = colorWithAlpha(color, 0.18);
                 ctx.fillRect(xL, top, xR - xL, height);
                 ctx.setLineDash([4, 3]);
                 ctx.strokeStyle = color;
@@ -341,7 +362,7 @@ export default function LiveChart() {
       if (m.endTimestamp == null) continue;
       const x0 = ((m.timestamp - tMin) / tRange) * pxW;
       const x1 = ((m.endTimestamp - tMin) / tRange) * pxW;
-      ctx.fillStyle = (m.color || '#cba6f7').replace(')', ',0.25)').replace('rgb', 'rgba');
+      ctx.fillStyle = colorWithAlpha(m.color || '#cba6f7', 0.25);
       ctx.fillRect(x0, 0, x1 - x0, pxH);
     }
 
@@ -613,16 +634,43 @@ export default function LiveChart() {
     if (paused || currentView === 'monitor') renderFrame();
   }, [paused, renderFrame, currentView]);
 
+  // Re-render when samples are cleared (totalSamples drops to 0)
+  const totalSamples = useAppStore((s) => s.totalSamples);
+  useEffect(() => {
+    if (totalSamples === 0) renderFrame();
+  }, [totalSamples, renderFrame]);
+
+  // Navigate to a marker timestamp when requested from MarkersPanel
+  const navigateTo = useAppStore((s) => s.navigateTo);
+  useEffect(() => {
+    if (!navigateTo) return;
+    viewportRef.current = [navigateTo.tMin, navigateTo.tMax];
+    useAppStore.getState().clearNavigateTo();
+    // Render immediately so chart + minimap jump to the marker
+    requestAnimationFrame(() => renderFrame());
+  }, [navigateTo, renderFrame]);
+
   const confirmMarker = () => {
     if (!markerPopup) return;
-    addMarker({
-      timestamp: markerPopup.ts,
-      endTimestamp: markerPopup.tsEnd,
-      label: markerLabel || MARKER_LABELS[markerCategory],
-      note: markerNote,
-      category: markerCategory,
-      color: MARKER_COLORS[markerCategory],
-    });
+    if (markerPopup.editId) {
+      // Editing existing marker
+      updateMarker(markerPopup.editId, {
+        label: markerLabel || MARKER_LABELS[markerCategory],
+        note: markerNote,
+        category: markerCategory,
+        color: markerColor || MARKER_COLORS[markerCategory],
+      });
+    } else {
+      // Adding new marker
+      addMarker({
+        timestamp: markerPopup.ts,
+        endTimestamp: markerPopup.tsEnd,
+        label: markerLabel || MARKER_LABELS[markerCategory],
+        note: markerNote,
+        category: markerCategory,
+        color: markerColor || MARKER_COLORS[markerCategory],
+      });
+    }
     setMarkerPopup(null);
   };
 
@@ -702,13 +750,13 @@ export default function LiveChart() {
     const popX = e.clientX - containerRect.left;
     const popY = e.clientY - containerRect.top;
 
-    setMarkerLabel('');
-    setMarkerNote('');
-    setMarkerCategory('note');
-
     // Inside active drag selection → range marker pre-filled with that selection
     const sel = u.select;
     if (sel.width > 4) {
+      setMarkerLabel('');
+      setMarkerNote('');
+      setMarkerCategory('note');
+      setMarkerColor('');
       const t0 = u.posToVal(sel.left, 'x');
       const t1 = u.posToVal(sel.left + sel.width, 'x');
       setMarkerPopup({ x: popX, y: popY, ts: t0, tsEnd: t1 });
@@ -716,15 +764,35 @@ export default function LiveChart() {
       return;
     }
 
-    // Inside a saved range marker → pre-fill with that range
-    const hit = markersRef.current.find(
+    // Hit-test existing markers (range + point) → open EDIT mode
+    const hitRange = markersRef.current.find(
       (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
     );
+    const hitPoint = !hitRange ? markersRef.current.find((m) => {
+      if (m.endTimestamp != null) return false;
+      const mx = u.valToPos(m.timestamp, 'x', true);
+      const clickX = u.valToPos(ts, 'x', true);
+      return Math.abs(mx - clickX) < 8; // 8px tolerance
+    }) : null;
+    const hit = hitRange || hitPoint;
+
     if (hit) {
-      setMarkerPopup({ x: popX, y: popY, ts: hit.timestamp, tsEnd: hit.endTimestamp });
-    } else {
-      setMarkerPopup({ x: popX, y: popY, ts });
+      // Edit existing marker
+      setMarkerLabel(hit.label);
+      setMarkerNote(hit.note);
+      setMarkerCategory(hit.category as MarkerCategory);
+      setMarkerColor(hit.color);
+      setMarkerPopup({ x: popX, y: popY, ts: hit.timestamp, tsEnd: hit.endTimestamp, editId: hit.id });
+      setTimeout(() => markerInputRef.current?.focus(), 50);
+      return;
     }
+
+    // Empty area → new point marker
+    setMarkerLabel('');
+    setMarkerNote('');
+    setMarkerCategory('note');
+    setMarkerColor('');
+    setMarkerPopup({ x: popX, y: popY, ts });
     setTimeout(() => markerInputRef.current?.focus(), 50);
   }, []);
 
@@ -866,25 +934,31 @@ export default function LiveChart() {
           style={{ background: CHART_BG }}
         />
 
-        {/* Marker add popup */}
+        {/* Marker add/edit popup */}
         {markerPopup && (
           <div
-            className="absolute z-50 bg-base-200 border border-surface-200 rounded-lg shadow-lg p-3 flex flex-col gap-2 w-64"
+            className="absolute z-50 bg-base-200 border border-surface-200 rounded-lg shadow-lg p-3 flex flex-col gap-2 w-72"
             style={{
-              left: Math.min(markerPopup.x + 8, (containerRef.current?.clientWidth ?? 400) - 268),
+              left: Math.min(markerPopup.x + 8, (containerRef.current?.clientWidth ?? 400) - 288),
               top: Math.max(markerPopup.y - 8, 4),
             }}
+            onClick={(e) => e.stopPropagation()}
           >
+            {/* Header */}
             <div className="flex items-center gap-1.5 text-xs text-text-subtle font-mono">
-              {markerPopup.tsEnd != null
-                ? <><AlignCenter size={11} className="text-accent-teal" /> Range marker</>
-                : <><MapPin size={11} className="text-accent-teal" /> Point marker</>
+              {markerPopup.editId
+                ? <><BookmarkPlus size={11} className="text-accent-yellow" /> Edit marker</>
+                : markerPopup.tsEnd != null
+                  ? <><AlignCenter size={11} className="text-accent-teal" /> Range marker</>
+                  : <><MapPin size={11} className="text-accent-teal" /> Point marker</>
               }
               <span className="ml-auto opacity-60">
                 {new Date(markerPopup.ts * 1000).toISOString().substr(11, 12)}
                 {markerPopup.tsEnd != null && ` – ${new Date(markerPopup.tsEnd * 1000).toISOString().substr(11, 12)}`}
               </span>
             </div>
+
+            {/* Label */}
             <input
               ref={markerInputRef}
               className="input text-xs"
@@ -896,6 +970,8 @@ export default function LiveChart() {
                 if (e.key === 'Escape') setMarkerPopup(null);
               }}
             />
+
+            {/* Note */}
             <textarea
               className="input text-xs resize-none"
               rows={2}
@@ -906,6 +982,8 @@ export default function LiveChart() {
                 if (e.key === 'Escape') setMarkerPopup(null);
               }}
             />
+
+            {/* Category buttons */}
             <div className="flex gap-1 flex-wrap">
               {QUICK_CATEGORIES.map((cat) => (
                 <button
@@ -917,15 +995,39 @@ export default function LiveChart() {
                       : 'bg-surface text-text-muted hover:text-text',
                   )}
                   style={markerCategory === cat ? { background: MARKER_COLORS[cat] } : {}}
-                  onClick={() => setMarkerCategory(cat)}
+                  onClick={() => {
+                    setMarkerCategory(cat);
+                    setMarkerColor(MARKER_COLORS[cat]);
+                  }}
                 >
                   {MARKER_LABELS[cat]}
                 </button>
               ))}
             </div>
+
+            {/* Color picker row */}
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-text-subtle">Color</span>
+              <label
+                className="w-6 h-6 rounded-full border-2 border-surface-200 cursor-pointer hover:ring-2 hover:ring-accent-teal/40 transition-all flex-none"
+                style={{ background: markerColor || MARKER_COLORS[markerCategory] }}
+              >
+                <input
+                  type="color"
+                  className="sr-only"
+                  value={markerColor || MARKER_COLORS[markerCategory]}
+                  onChange={(e) => setMarkerColor(e.target.value)}
+                />
+              </label>
+              <span className="text-xs text-text-subtle font-mono opacity-60">
+                {markerColor || MARKER_COLORS[markerCategory]}
+              </span>
+            </div>
+
+            {/* Action buttons */}
             <div className="flex gap-1">
               <button className="btn btn-primary btn-sm flex-1 text-xs flex items-center gap-1 justify-center" onClick={confirmMarker}>
-                <BookmarkPlus size={12} /> Add
+                <BookmarkPlus size={12} /> {markerPopup.editId ? 'Save' : 'Add'}
               </button>
               <button className="btn btn-ghost btn-sm text-xs" onClick={() => setMarkerPopup(null)}>
                 <X size={12} />
