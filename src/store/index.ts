@@ -117,6 +117,8 @@ export interface AppStore {
   pushSampleEvent: (sample: Sample) => void;
   pushSampleBatch: (timestamps: number[], amps: number[]) => void;
   loadSamplesFromBackend: (timestamps: number[], amps: number[]) => void;
+  /** Insert a NaN gap so the chart draws a break between acquisitions. */
+  markNewAcquisition: () => void;
   clearSamples: () => void;
   setPaused: (paused: boolean) => void;
   setTimeWindow: (seconds: number) => void;
@@ -195,6 +197,17 @@ export const useAppStore = create<AppStore>((set, get) => ({
     }
   },
 
+  markNewAcquisition: () => {
+    const state = get();
+    // Only insert a gap if there is existing data (avoids leading NaN)
+    if (state.sampleBuffer.count > 0) {
+      const lastTs = state.lastSampleTs ?? Date.now() / 1000;
+      // Push a NaN amps value at a tiny offset after the last timestamp.
+      // uPlot's spanGaps:false will break the line at this point.
+      pushSample(state.sampleBuffer, lastTs + 0.0001, NaN);
+    }
+  },
+
   loadSamplesFromBackend: (timestamps, amps) => {
     const newBuf = makeSampleBuffer();
     const n = Math.min(timestamps.length, amps.length, MAX_FRONTEND_SAMPLES);
@@ -205,7 +218,15 @@ export const useAppStore = create<AppStore>((set, get) => ({
   },
 
   clearSamples: () => {
-    set({ sampleBuffer: makeSampleBuffer(), totalSamples: 0, lastSampleTs: null });
+    set({
+      sampleBuffer: makeSampleBuffer(),
+      totalSamples: 0,
+      lastSampleTs: null,
+      viewStats: null,
+      selectionStats: null,
+      selectionRange: null,
+      integrationResult: null,
+    });
   },
 
   setPaused: (paused) => set({ paused }),

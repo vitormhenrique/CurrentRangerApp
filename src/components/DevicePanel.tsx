@@ -40,6 +40,7 @@ export default function DevicePanel() {
 
   const isConnected = useAppStore(selectIsConnected);
   const deviceStatus = useAppStore(selectDeviceStatus);
+  const paused = useAppStore((s) => s.paused);
   const [baud, setBaud] = useState(230400);
   const [isBusy, setIsBusy] = useState(false);
 
@@ -160,38 +161,53 @@ export default function DevicePanel() {
       {/* Quick status badges */}
       {isConnected && (
         <div className="flex flex-wrap gap-1 pt-1">
-          {deviceStatus.usbLogging != null && (
-            <span
-              className={clsx(
-                'text-xs px-1.5 py-0.5 rounded font-mono',
-                deviceStatus.usbLogging
-                  ? 'bg-accent-green/10 text-accent-green'
-                  : 'bg-surface text-text-subtle',
-              )}
-            >
-              USB {deviceStatus.usbLogging ? 'LOG' : 'off'}
-            </span>
-          )}
+          {/* USB logging + streaming indicator */}
+          <span
+            className={clsx(
+              'text-xs px-1.5 py-0.5 rounded font-mono font-bold',
+              deviceStatus.usbLogging && !paused
+                ? 'bg-accent-green/20 text-accent-green ring-1 ring-accent-green/40'
+                : deviceStatus.usbLogging
+                ? 'bg-accent-yellow/15 text-accent-yellow'
+                : 'bg-surface text-text-subtle',
+            )}
+          >
+            {deviceStatus.usbLogging && !paused ? '▶ STREAM' : deviceStatus.usbLogging ? '⏸ PAUSED' : 'USB off'}
+          </span>
           {deviceStatus.autorangeEnabled != null && (
             <span
               className={clsx(
                 'text-xs px-1.5 py-0.5 rounded font-mono',
                 deviceStatus.autorangeEnabled
-                  ? 'bg-accent-blue/10 text-accent-blue'
+                  ? 'bg-accent-blue/15 text-accent-blue font-bold'
                   : 'bg-surface text-text-subtle',
               )}
             >
               {deviceStatus.autorangeEnabled ? 'AUTO' : 'MAN'}
             </span>
           )}
-          {deviceStatus.lpfEnabled && (
-            <span className="text-xs px-1.5 py-0.5 rounded font-mono bg-accent-yellow/10 text-accent-yellow">
-              LPF
+          {deviceStatus.lpfEnabled != null && (
+            <span
+              className={clsx(
+                'text-xs px-1.5 py-0.5 rounded font-mono',
+                deviceStatus.lpfEnabled
+                  ? 'bg-accent-yellow/15 text-accent-yellow font-bold'
+                  : 'bg-surface text-text-subtle',
+              )}
+            >
+              LPF{deviceStatus.lpfEnabled ? '' : ' off'}
             </span>
           )}
-          {deviceStatus.biasEnabled && (
-            <span className="text-xs px-1.5 py-0.5 rounded font-mono bg-accent-mauve/10 text-accent-mauve">
-              BIAS
+          {deviceStatus.biasEnabled != null && (
+            <span
+              className={clsx(
+                'text-xs px-1.5 py-0.5 rounded font-mono',
+                deviceStatus.biasEnabled
+                  ? 'bg-accent-mauve/15 text-accent-mauve font-bold'
+                  : 'bg-surface text-text-subtle',
+              )}
+            >
+              BIAS{deviceStatus.biasEnabled ? '' : ' off'}
             </span>
           )}
           {deviceStatus.loggingFormat && (
@@ -208,7 +224,7 @@ export default function DevicePanel() {
           <div className="divider" />
           <div className="panel-title">Quick Controls</div>
 
-          {/* USB logging toggle — enabling logging also resumes the chart */}
+          {/* USB logging toggle — keeps chart pause/resume in sync */}
           <div className="flex items-center justify-between">
             <span className="text-xs text-text-muted">USB Logging</span>
             <button
@@ -216,7 +232,8 @@ export default function DevicePanel() {
               onClick={async () => {
                 const willEnable = !deviceStatus.usbLogging;
                 await send('u');
-                if (willEnable) setPaused(false);
+                // Sync chart state: enable → resume, disable → pause
+                setPaused(!willEnable);
               }}
             >
               {deviceStatus.usbLogging ? 'ON' : 'OFF'}

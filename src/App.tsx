@@ -72,8 +72,22 @@ export default function App() {
 
       unlisteners.push(
         await onSerialSampleBatch((batch) => pushSampleBatch(batch.timestamps, batch.amps)),
-        await onSerialStatus((status) => setConnectionStatus(status)),
+        await onSerialStatus((status) => {
+          // When transitioning to Connected, mark a gap so chart lines don't bridge sessions
+          const prev = useAppStore.getState().connectionStatus.state;
+          if (status.state === 'Connected' && prev !== 'Connected') {
+            useAppStore.getState().markNewAcquisition();
+            // Auto-resume chart on new connection
+            useAppStore.getState().setPaused(false);
+          }
+          setConnectionStatus(status);
+        }),
         await onSerialDeviceStatus((ds) => {
+          const prev = useAppStore.getState().connectionStatus.deviceStatus;
+          // USB logging just turned on → insert a gap so chart lines break
+          if (ds.usbLogging === true && prev.usbLogging !== true) {
+            useAppStore.getState().markNewAcquisition();
+          }
           setConnectionStatus({
             ...useAppStore.getState().connectionStatus,
             deviceStatus: ds,

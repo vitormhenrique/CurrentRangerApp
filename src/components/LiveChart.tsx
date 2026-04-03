@@ -174,7 +174,7 @@ export default function LiveChart() {
                   const { ts, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
                   let yLo = Infinity, yHi = -Infinity;
                   for (let i = 0; i < ts.length; i++) {
-                    if (ts[i] >= min && ts[i] <= max) {
+                    if (ts[i] >= min && ts[i] <= max && isFinite(amps[i])) {
                       if (amps[i] < yLo) yLo = amps[i];
                       if (amps[i] > yHi) yHi = amps[i];
                     }
@@ -346,17 +346,28 @@ export default function LiveChart() {
     }
 
     let minV = Infinity, maxV = -Infinity;
-    for (let i = 0; i < n; i++) { minV = Math.min(minV, amps[i]); maxV = Math.max(maxV, amps[i]); }
+    for (let i = 0; i < n; i++) {
+      if (!isFinite(amps[i])) continue;
+      minV = Math.min(minV, amps[i]); maxV = Math.max(maxV, amps[i]);
+    }
+    if (!isFinite(minV)) return; // all NaN
     const aRange = (maxV - minV) || 1;
     const stride = Math.max(1, Math.ceil(n / pxW));
     ctx.beginPath();
     ctx.strokeStyle = MINIMAP_TRACE;
     ctx.lineWidth = 1;
-    let first = true;
+    let drawing = false;
     for (let i = 0; i < n; i += stride) {
+      // Check if ANY sample in this stride block is a NaN gap sentinel
+      let hasGap = false;
+      const blockEnd = Math.min(i + stride, n);
+      for (let j = i; j < blockEnd; j++) {
+        if (!isFinite(amps[j])) { hasGap = true; break; }
+      }
+      if (hasGap) { drawing = false; continue; } // pen up at gap
       const x = ((ts[i] - tMin) / tRange) * pxW;
       const y = pxH - ((amps[i] - minV) / aRange) * (pxH - 4) - 2;
-      if (first) { ctx.moveTo(x, y); first = false; } else ctx.lineTo(x, y);
+      if (!drawing) { ctx.moveTo(x, y); drawing = true; } else ctx.lineTo(x, y);
     }
     ctx.stroke();
 
@@ -417,10 +428,21 @@ export default function LiveChart() {
     const store = useAppStore.getState();
     const { ts: rawTs, amps: rawAmps } = getOrderedSlice(store.sampleBuffer);
     const n = rawTs.length;
-    if (n === 0) return;
 
+    // If buffer is empty (e.g. after Clear), reset the chart and minimap
+    if (n === 0) {
+      u.setData([[], []], false);
+      setLiveValue(null);
+      setViewStats(null);
+      viewportRef.current = null;
+      drawMinimap();
+      return;
+    }
+
+    // When live (not paused): slice to the time window (last N seconds).
+    // When paused: feed ALL data so the user can scroll anywhere via minimap.
     let startIdx = 0;
-    if (timeWindowS > 0) {
+    if (!paused && timeWindowS > 0) {
       const cutoff = rawTs[n - 1] - timeWindowS;
       let lo = 0, hi = n - 1;
       while (lo < hi) {
@@ -436,8 +458,14 @@ export default function LiveChart() {
     const visN = visTs.length;
     if (visN === 0) return;
 
-    setLiveValue(visAmps[visN - 1]);
+    // Update the live value readout (last finite value)
+    for (let i = visN - 1; i >= 0; i--) {
+      if (isFinite(visAmps[i])) { setLiveValue(visAmps[i]); break; }
+    }
 
+    // ── Downsample for display (min-max envelope per pixel) ──
+    // NaN gaps: if any sample in a stride block is NaN, emit a NaN point
+    // so uPlot breaks the line between acquisitions.
     const maxPts = Math.max((u.width - 60) * 2, 500);
     let dispTs: ArrayLike<number>, dispAmps: ArrayLike<number>;
 
@@ -446,11 +474,21 @@ export default function LiveChart() {
       dispAmps = visAmps;
     } else {
       const stride = Math.ceil(visN / (maxPts / 2));
-      const outN = Math.ceil(visN / stride) * 2;
+      const outN = Math.ceil(visN / stride) * 2 + Math.ceil(visN / stride); // room for gaps
       const dTs = new Float64Array(outN);
       const dAmps = new Float64Array(outN);
       let out = 0;
       for (let i = 0; i + stride <= visN; i += stride) {
+        // Check if this block contains a NaN gap sentinel
+        let hasGap = false;
+        for (let j = i; j < i + stride; j++) {
+          if (!isFinite(visAmps[j])) { hasGap = true; break; }
+        }
+        if (hasGap) {
+          // Emit a NaN point to break the line
+          dTs[out] = visTs[i]; dAmps[out] = NaN; out++;
+          continue;
+        }
         let mn = Infinity, mx = -Infinity, mnI = i, mxI = i;
         for (let j = i; j < i + stride; j++) {
           if (visAmps[j] < mn) { mn = visAmps[j]; mnI = j; }
@@ -465,17 +503,38 @@ export default function LiveChart() {
       dispAmps = dAmps.subarray(0, out);
     }
 
+    // Convert NaN in amps to null for uPlot (null = gap in the line)
+    const tsArr = Array.from(dispTs);
+    const ampsArr: (number | null)[] = Array.from(dispAmps).map((v) => (isFinite(v) ? v : null));
+
     // Flag our own setScale calls so the hook doesn't treat them as user pan
     programmaticScale.current = true;
     u.batch(() => {
-      u.setData([Array.from(dispTs), Array.from(dispAmps)], false);
+      u.setData([tsArr, ampsArr] as uPlot.AlignedData, false);
 
       if (!paused) {
+        // Live mode: scroll to show the time window at the tail
         const tMin = visTs[0];
         const tMax = visTs[visN - 1];
         const xPad = Math.max((tMax - tMin) * 0.01, 0.01);
         u.setScale('x', { min: tMin, max: tMax + xPad });
+      } else {
+        // Paused: preserve whatever viewport the user has scrolled to.
+        // If there's no saved viewport yet (just paused), snap to the last
+        // `timeWindowS` seconds of data so the view doesn't jump.
+        const vp = viewportRef.current;
+        if (vp) {
+          u.setScale('x', { min: vp[0], max: vp[1] });
+        } else {
+          const tMax = visTs[visN - 1];
+          const tMin = timeWindowS > 0 ? tMax - timeWindowS : visTs[0];
+          u.setScale('x', { min: tMin, max: tMax });
+        }
       }
+
+      // Y-axis: when paused, compute from the current VIEWPORT, not all data
+      const yData = visAmps;
+      const yRange = paused ? viewportRef.current : null;
 
       if (!yAutoScale) {
         const yMinVal = parseFloat(yMin);
@@ -486,27 +545,43 @@ export default function LiveChart() {
       } else {
         let yLo = Infinity, yHi = -Infinity;
         for (let i = 0; i < visN; i++) {
-          if (visAmps[i] < yLo) yLo = visAmps[i];
-          if (visAmps[i] > yHi) yHi = visAmps[i];
+          const v = yData[i];
+          if (!isFinite(v)) continue;
+          // When paused, only consider data within the current viewport
+          if (yRange && (visTs[i] < yRange[0] || visTs[i] > yRange[1])) continue;
+          if (v < yLo) yLo = v;
+          if (v > yHi) yHi = v;
         }
-        const yMargin = Math.max((yHi - yLo) * 0.1, Math.abs(yHi) * 0.1, 1e-6);
-        u.setScale('y', { min: yLo - yMargin, max: yHi + yMargin });
+        if (isFinite(yLo) && isFinite(yHi)) {
+          const yMargin = Math.max((yHi - yLo) * 0.1, Math.abs(yHi) * 0.1, 1e-6);
+          u.setScale('y', { min: yLo - yMargin, max: yHi + yMargin });
+        }
       }
     });
     programmaticScale.current = false;
 
-    let sum = 0, mn = Infinity, mx = -Infinity;
+    // Compute view stats, skipping NaN gap sentinels
+    // When paused, scope stats to the viewport; when live, all visible data
+    const statsRange = paused ? viewportRef.current : null;
+    let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
     for (let i = 0; i < visN; i++) {
-      sum += visAmps[i]; mn = Math.min(mn, visAmps[i]); mx = Math.max(mx, visAmps[i]);
+      const v = visAmps[i];
+      if (!isFinite(v)) continue;
+      if (statsRange && (visTs[i] < statsRange[0] || visTs[i] > statsRange[1])) continue;
+      sum += v; mn = Math.min(mn, v); mx = Math.max(mx, v); cnt++;
     }
-    setViewStats({
-      count: visN,
-      avgAmps: sum / visN,
-      minAmps: mn,
-      maxAmps: mx,
-      durationS: visTs[visN - 1] - visTs[0],
-      rateHz: visN / Math.max(visTs[visN - 1] - visTs[0], 1e-6),
-    });
+    if (cnt > 0) {
+      const t0 = statsRange ? statsRange[0] : visTs[0];
+      const t1 = statsRange ? statsRange[1] : visTs[visN - 1];
+      setViewStats({
+        count: cnt,
+        avgAmps: sum / cnt,
+        minAmps: mn,
+        maxAmps: mx,
+        durationS: t1 - t0,
+        rateHz: cnt / Math.max(t1 - t0, 1e-6),
+      });
+    }
 
     drawMinimap();
   }, [paused, timeWindowS, yAutoScale, yMin, yMax, setViewStats, drawMinimap]);
@@ -556,15 +631,29 @@ export default function LiveChart() {
   const handleChartClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
     const u = plotRef.current;
     if (!u || markerPopupOpenRef.current) return;
-    const sel = u.select;
-    if (sel.width > 4) return; // drag selection handled by uPlot setSelect hook
 
     const rect = u.over.getBoundingClientRect();
     const px = e.clientX - rect.left;
-    // Ignore clicks outside the plot area (axes, padding)
     if (px < 0 || px > rect.width) return;
     const ts = u.posToVal(px, 'x');
     if (!isFinite(ts)) return;
+
+    const sel = u.select;
+
+    // If there is an active drag-selection box, check whether the click is
+    // inside or outside it.  Outside → clear selection.  Inside → ignore
+    // (the setSelect hook already handled it).
+    if (sel.width > 4) {
+      const selLeft = sel.left;
+      const selRight = sel.left + sel.width;
+      if (px < selLeft || px > selRight) {
+        // Click is outside the drag-selection → clear everything
+        setSelectionRange(null);
+        setSelectionStats(null);
+        u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+      }
+      return;
+    }
 
     // Hit-test saved range markers → load their stats as selection
     const hit = markersRef.current.find(
@@ -575,7 +664,7 @@ export default function LiveChart() {
       const { ts: bufTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
       let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
       for (let i = 0; i < bufTs.length; i++) {
-        if (bufTs[i] >= hit.timestamp && bufTs[i] <= hit.endTimestamp!) {
+        if (bufTs[i] >= hit.timestamp && bufTs[i] <= hit.endTimestamp! && isFinite(amps[i])) {
           sum += amps[i]; mn = Math.min(mn, amps[i]); mx = Math.max(mx, amps[i]); cnt++;
         }
       }
@@ -589,12 +678,13 @@ export default function LiveChart() {
       return;
     }
 
-    // Click on empty area → clear selection
-    if (useAppStore.getState().selectionRange != null) {
+    // Click on empty area → clear any active selection (store-level or uPlot-level)
+    const hasStoreSelection = useAppStore.getState().selectionRange != null;
+    if (hasStoreSelection) {
       setSelectionRange(null);
       setSelectionStats(null);
-      u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
     }
+    u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
   }, [setSelectionRange, setSelectionStats]);
 
   const handleChartContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
@@ -703,7 +793,19 @@ export default function LiveChart() {
                 'btn btn-sm btn-ghost px-2 text-xs',
                 timeWindowS === w.value && 'bg-surface text-text',
               )}
-              onClick={() => setTimeWindow(w.value)}
+              onClick={() => {
+                setTimeWindow(w.value);
+                // Snap the viewport to show the selected time window
+                const { ts } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+                if (ts.length > 1) {
+                  const tMax = ts[ts.length - 1];
+                  const tMin = w.value > 0 ? tMax - w.value : ts[0];
+                  viewportRef.current = [tMin, tMax];
+                  // Immediately re-render so chart + minimap reflect the new window
+                  // Use requestAnimationFrame to ensure state has settled
+                  requestAnimationFrame(() => renderFrame());
+                }
+              }}
             >
               {w.label}
             </button>
@@ -715,7 +817,20 @@ export default function LiveChart() {
           className={clsx('btn btn-sm flex items-center gap-1', paused ? 'btn-primary' : 'btn-ghost')}
           onClick={async () => {
             const nextPaused = !paused;
-            setPaused(nextPaused);
+
+            if (nextPaused) {
+              // Pausing → snapshot the current viewport so renderFrame preserves it
+              // (viewportRef is already set by the setScale hook, so nothing extra needed)
+              setPaused(true);
+            } else {
+              // Resuming → clear selection, reset viewport so live mode takes over
+              setSelectionRange(null);
+              setSelectionStats(null);
+              plotRef.current?.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+              viewportRef.current = null; // let live mode set the viewport
+              setPaused(false);
+            }
+
             const state = useAppStore.getState();
             if (state.connectionStatus.state === 'Connected') {
               if (nextPaused) {
@@ -726,6 +841,7 @@ export default function LiveChart() {
               } else {
                 if (disabledUsbOnPause.current) {
                   disabledUsbOnPause.current = false;
+                  // Re-enabling USB logging → gap is inserted by onSerialDeviceStatus handler
                   try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
                 }
               }
