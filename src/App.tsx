@@ -48,7 +48,9 @@ export default function App() {
       const firstPort = ports.find(
         (p) =>
           p.name.toLowerCase().includes('usbmodem') ||
-          (p.description || '').toLowerCase().includes('currentranger'),
+          p.name.toLowerCase().includes('ttyacm') ||
+          (p.description || '').toLowerCase().includes('currentranger') ||
+          p.vid === 0x239a,
       );
       if (firstPort) {
         useAppStore.getState().setSelectedPort(firstPort.name);
@@ -180,33 +182,32 @@ export default function App() {
       </header>
 
       {/* ── Body ─────────────────────────────────────────────────────────── */}
-      {currentView === 'monitor' ? (
-        <div className="flex flex-1 overflow-hidden">
-          {/* Left sidebar */}
-          <aside className="flex-none w-60 flex flex-col gap-2 p-2 border-r border-surface-200 overflow-y-auto">
-            <DevicePanel />
-            <div className="divider" />
-            <IntegrationPanel />
-            <div className="divider" />
-            <BatteryTools />
-          </aside>
+      {/* Both views are kept mounted; toggling visibility avoids remounting
+          the LiveChart (which would restart the animation and lose viewport). */}
+      <div className={clsx('flex flex-1 overflow-hidden', currentView !== 'monitor' && 'hidden')}>
+        {/* Left sidebar */}
+        <aside className="flex-none w-60 flex flex-col gap-2 p-2 border-r border-surface-200 overflow-y-auto">
+          <DevicePanel />
+          <div className="divider" />
+          <IntegrationPanel />
+          <div className="divider" />
+          <BatteryTools />
+        </aside>
 
-          {/* Centre: chart + stats */}
-          <main className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
-            <LiveChart />
-            <StatsPanel />
-          </main>
+        {/* Centre: chart + stats */}
+        <main className="flex-1 flex flex-col overflow-hidden p-2 gap-2">
+          <LiveChart />
+          <StatsPanel />
+        </main>
 
-          {/* Right sidebar */}
-          <aside className="flex-none w-60 flex flex-col p-2 border-l border-surface-200 overflow-y-auto">
-            <MarkersPanel />
-          </aside>
-        </div>
-      ) : (
-        <div className="flex-1 overflow-hidden">
-          <DeviceConfig />
-        </div>
-      )}
+        {/* Right sidebar */}
+        <aside className="flex-none w-60 flex flex-col p-2 border-l border-surface-200 overflow-y-auto">
+          <MarkersPanel />
+        </aside>
+      </div>
+      <div className={clsx('flex-1 overflow-hidden', currentView !== 'device-config' && 'hidden')}>
+        <DeviceConfig />
+      </div>
 
       {/* Status bar */}
       <StatusBar />

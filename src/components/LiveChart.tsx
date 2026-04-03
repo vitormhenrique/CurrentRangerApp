@@ -5,6 +5,7 @@ import uPlot from 'uplot';
 import 'uplot/dist/uPlot.min.css';
 import { useAppStore, getOrderedSlice } from '../store';
 import { formatCurrentShort, MARKER_COLORS, MARKER_LABELS, MarkerCategory, Marker } from '../types';
+import { api } from '../api/tauri';
 import clsx from 'clsx';
 import { Pause, Play, BookmarkPlus, X, MapPin, AlignCenter } from 'lucide-react';
 
@@ -49,6 +50,7 @@ export default function LiveChart() {
   const minimapDragging    = useRef(false);
   const pausedRef          = useRef(false);
   const connectedRef       = useRef(false);
+  const disabledUsbOnPause = useRef(false);
 
   const {
     paused,
@@ -138,7 +140,7 @@ export default function LiveChart() {
           grid: { stroke: GRID_COLOR, width: 0.5 },
           ticks: { stroke: GRID_COLOR, width: 0.5 },
           values: (_u, vals) => vals.map((v) => (v == null ? '' : formatYAxis(v))),
-          size: 60,
+          size: 75,
         },
       ],
       scales: {
@@ -146,6 +148,17 @@ export default function LiveChart() {
         y: { auto: true },
       },
       hooks: {
+        setScale: [
+          (u, scaleKey) => {
+            if (scaleKey === 'x') {
+              const { min, max } = u.scales.x;
+              if (min != null && max != null) {
+                viewportRef.current = [min, max];
+              }
+              drawMinimap();
+            }
+          },
+        ],
         setCursor: [
           (u) => {
             const left = (u.cursor as { left?: number }).left;
@@ -664,7 +677,24 @@ export default function LiveChart() {
         {/* Pause */}
         <button
           className={clsx('btn btn-sm flex items-center gap-1', paused ? 'btn-primary' : 'btn-ghost')}
-          onClick={() => setPaused(!paused)}
+          onClick={async () => {
+            const nextPaused = !paused;
+            setPaused(nextPaused);
+            const state = useAppStore.getState();
+            if (state.connectionStatus.state === 'Connected') {
+              if (nextPaused) {
+                if (state.connectionStatus.deviceStatus.usbLogging === true) {
+                  disabledUsbOnPause.current = true;
+                  try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
+                }
+              } else {
+                if (disabledUsbOnPause.current) {
+                  disabledUsbOnPause.current = false;
+                  try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
+                }
+              }
+            }
+          }}
         >
           {paused ? <><Play size={12} /> Resume</> : <><Pause size={12} /> Pause</>}
         </button>

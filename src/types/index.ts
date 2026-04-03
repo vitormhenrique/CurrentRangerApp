@@ -33,6 +33,8 @@ export interface DeviceStatus {
   adcOffset?: number;
   adcGain?: number;
   ldoVoltage?: number;
+  /** Current forced range — only set optimistically by the UI (firmware doesn't report over USB). */
+  currentRange?: 'MA' | 'UA' | 'NA';
 }
 
 export interface ConnectionStatus {

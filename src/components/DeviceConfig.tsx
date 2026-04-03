@@ -88,6 +88,25 @@ export default function DeviceConfig() {
     }
   };
 
+  // Force a specific range and reflect it optimistically (firmware sends no USB ack).
+  const sendRange = async (cmd: '1' | '2' | '3') => {
+    if (!isConnected) return;
+    const rangeMap = { '1': 'MA', '2': 'UA', '3': 'NA' } as const;
+    try {
+      await api.sendDeviceCommand(cmd);
+      setConnectionStatus({
+        ...connectionStatus,
+        deviceStatus: {
+          ...deviceStatus,
+          autorangeEnabled: false,
+          currentRange: rangeMap[cmd],
+        },
+      });
+    } catch (e) {
+      appendStatusLog(`Error: ${e}`);
+    }
+  };
+
   // Send command + optimistically toggle a device status boolean
   const sendToggle = async (cmd: string, key: keyof typeof deviceStatus) => {
     if (!isConnected) return;
@@ -178,16 +197,21 @@ export default function DeviceConfig() {
           description="Force a specific current range or let the device autorange"
         >
           <div className="flex gap-1">
-            {(['mA', 'µA', 'nA'] as const).map((r, i) => (
-              <button
-                key={r}
-                className="btn btn-ghost btn-sm font-mono text-xs"
-                onClick={() => send(String(i + 1))}
-                disabled={!isConnected}
-              >
-                {r}
-              </button>
-            ))}
+            {(['mA', 'µA', 'nA'] as const).map((r, i) => {
+              const cmd = String(i + 1) as '1' | '2' | '3';
+              const rangeKey = (['MA', 'UA', 'NA'] as const)[i];
+              const active = !deviceStatus.autorangeEnabled && deviceStatus.currentRange === rangeKey;
+              return (
+                <button
+                  key={r}
+                  className={clsx('btn btn-sm font-mono text-xs', active ? 'btn-primary' : 'btn-ghost')}
+                  onClick={() => sendRange(cmd)}
+                  disabled={!isConnected}
+                >
+                  {r}
+                </button>
+              );
+            })}
           </div>
         </Row>
 

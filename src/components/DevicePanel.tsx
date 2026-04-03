@@ -28,6 +28,16 @@ export default function DevicePanel() {
   const refreshPorts = async () => {
     const ps = await api.listPorts();
     setPorts(ps);
+    if (!isConnected) {
+      const match = ps.find(
+        (p) =>
+          p.name.toLowerCase().includes('usbmodem') ||
+          p.name.toLowerCase().includes('ttyacm') ||
+          (p.description || '').toLowerCase().includes('currentranger') ||
+          p.vid === 0x239a,
+      );
+      if (match) setSelectedPort(match.name);
+    }
   };
 
   const toggleConnect = async () => {
@@ -53,6 +63,24 @@ export default function DevicePanel() {
 
   const send = async (cmd: string) => {
     try { await api.sendDeviceCommand(cmd); } catch { /* ignore */ }
+  };
+
+  // Force a specific range and reflect it optimistically in the UI.
+  // The firmware disables autoranging when a specific range is forced but
+  // sends no USB confirmation, so we update the store directly.
+  const sendRange = async (cmd: '1' | '2' | '3') => {
+    const rangeMap = { '1': 'MA', '2': 'UA', '3': 'NA' } as const;
+    try {
+      await api.sendDeviceCommand(cmd);
+      setConnectionStatus({
+        ...connectionStatus,
+        deviceStatus: {
+          ...deviceStatus,
+          autorangeEnabled: false,
+          currentRange: rangeMap[cmd],
+        },
+      });
+    } catch { /* ignore */ }
   };
 
   // Optimistic toggle for commands with no serial feedback
@@ -181,9 +209,21 @@ export default function DevicePanel() {
 
           {/* Range buttons */}
           <div className="flex gap-1">
-            <button className="btn btn-ghost btn-sm flex-1 font-mono text-xs" onClick={() => send('1')} title="Force mA">mA</button>
-            <button className="btn btn-ghost btn-sm flex-1 font-mono text-xs" onClick={() => send('2')} title="Force µA">µA</button>
-            <button className="btn btn-ghost btn-sm flex-1 font-mono text-xs" onClick={() => send('3')} title="Force nA">nA</button>
+            {(['mA', 'µA', 'nA'] as const).map((label, i) => {
+              const cmd = String(i + 1) as '1' | '2' | '3';
+              const rangeKey = (['MA', 'UA', 'NA'] as const)[i];
+              const active = !deviceStatus.autorangeEnabled && deviceStatus.currentRange === rangeKey;
+              return (
+                <button
+                  key={label}
+                  className={clsx('btn btn-sm flex-1 font-mono text-xs', active ? 'btn-primary' : 'btn-ghost')}
+                  onClick={() => sendRange(cmd)}
+                  title={`Force ${label}`}
+                >
+                  {label}
+                </button>
+              );
+            })}
             <button
               className={clsx('btn btn-sm flex-1 text-xs', deviceStatus.autorangeEnabled ? 'btn-primary' : 'btn-ghost')}
               onClick={() => sendToggle('6', 'autorangeEnabled')}
