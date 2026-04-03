@@ -73,12 +73,12 @@ export default function App() {
       unlisteners.push(
         await onSerialSampleBatch((batch) => pushSampleBatch(batch.timestamps, batch.amps)),
         await onSerialStatus((status) => {
-          // When transitioning to Connected, mark a gap so chart lines don't bridge sessions
           const prev = useAppStore.getState().connectionStatus.state;
           if (status.state === 'Connected' && prev !== 'Connected') {
             useAppStore.getState().markNewAcquisition();
-            // Auto-resume chart on new connection
             useAppStore.getState().setPaused(false);
+            useAppStore.getState().setSelectionRange(null);
+            useAppStore.getState().setSelectionStats(null);
           }
           setConnectionStatus(status);
         }),

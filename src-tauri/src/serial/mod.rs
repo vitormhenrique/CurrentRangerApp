@@ -323,6 +323,8 @@ impl SerialManager {
         self.status.port = None;
         self.status.baud = None;
         self.status.error = None;
+        // Reset device status so reconnect starts clean — the bootstrap will re-query
+        self.status.device_status = DeviceStatus::default();
     }
 
     /// Disconnect and emit status to the frontend.

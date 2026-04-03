@@ -132,7 +132,14 @@ export default function LiveChart() {
 
   // Keep refs in sync for event handlers created in useLayoutEffect
   useEffect(() => { pausedRef.current = paused; }, [paused]);
-  useEffect(() => { connectedRef.current = isConnected; }, [isConnected]);
+  useEffect(() => {
+    connectedRef.current = isConnected;
+    // On reconnect, reset stale state so live mode works cleanly
+    if (isConnected) {
+      disabledUsbOnPause.current = false;
+      viewportRef.current = null;
+    }
+  }, [isConnected]);
   useEffect(() => { yAutoScaleRef.current = yAutoScale; }, [yAutoScale]);
 
   // Sync markers ref and redraw when markers change
@@ -489,20 +496,9 @@ export default function LiveChart() {
     const { ts: rawTs, amps: rawAmps } = getOrderedSlice(store.sampleBuffer);
     const n = rawTs.length;
 
-    // If buffer is empty (e.g. after Clear), reset the chart and minimap
-    if (n === 0) {
-      programmaticScale.current = true;
-      // uPlot needs at least one data point to clear properly; use null for a blank chart
-      u.setData([[0, 1], [null, null]] as uPlot.AlignedData, false);
-      u.setScale('x', { min: 0, max: 1 });
-      u.setScale('y', { min: 0, max: 1 });
-      programmaticScale.current = false;
-      setLiveValue(null);
-      setViewStats(null);
-      viewportRef.current = null;
-      drawMinimap();
-      return;
-    }
+    // If buffer is empty, do nothing — keep whatever is on screen until data arrives.
+    // The clearGeneration effect handles explicit clears separately.
+    if (n === 0) return;
 
     // When live (not paused): slice to the time window (last N seconds).
     // When paused: feed ALL data so the user can scroll anywhere via minimap.
@@ -678,11 +674,21 @@ export default function LiveChart() {
     if (paused || currentView === 'monitor') renderFrame();
   }, [paused, renderFrame, currentView]);
 
-  // Re-render when samples are explicitly cleared
+  // When samples are explicitly cleared, wipe the chart directly
   const clearGeneration = useAppStore((s) => s.clearGeneration);
   useEffect(() => {
-    if (clearGeneration > 0) renderFrame();
-  }, [clearGeneration, renderFrame]);
+    if (clearGeneration === 0) return; // skip initial mount
+    const u = plotRef.current;
+    if (!u) return;
+    programmaticScale.current = true;
+    u.setData([[0, 1], [null, null]] as uPlot.AlignedData, false);
+    u.setScale('x', { min: 0, max: 1 });
+    u.setScale('y', { min: 0, max: 1 });
+    programmaticScale.current = false;
+    setLiveValue(null);
+    viewportRef.current = null;
+    drawMinimap();
+  }, [clearGeneration, drawMinimap]);
 
   // Navigate to a marker timestamp when requested from MarkersPanel
   const navigateTo = useAppStore((s) => s.navigateTo);
