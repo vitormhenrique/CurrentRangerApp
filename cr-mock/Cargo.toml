@@ -1,0 +1,18 @@
+[package]
+name = "cr-mock"
+version = "0.1.0"
+edition = "2021"
+description = "CurrentRanger R3 firmware mock — virtual serial port with interactive TUI"
+
+[[bin]]
+name = "cr-mock"
+path = "src/main.rs"
+
+[dependencies]
+rand       = "0.8"
+serialport = "4"
+ratatui    = "0.29"
+crossterm  = "0.28"
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"

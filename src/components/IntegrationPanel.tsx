@@ -52,11 +52,16 @@ export default function IntegrationPanel() {
   };
 
   const r = integrationResult;
-  const sourceLabel = selectionRange ? '← selection' : '← all data';
-
   return (
     <div className="panel">
-      <div className="panel-title">Charge / Energy</div>
+      <div className="flex items-center gap-1.5">
+        <span className="panel-title">Charge / Energy</span>
+        {selectionRange && (
+          <span className="text-[10px] px-1.5 py-0.5 rounded font-mono bg-accent-teal/15 text-accent-teal">
+            selection
+          </span>
+        )}
+      </div>
 
       <div className="flex items-center gap-2">
         <label className="text-xs text-text-muted w-16">Voltage</label>
@@ -72,18 +77,13 @@ export default function IntegrationPanel() {
         <span className="text-xs text-text-muted">V</span>
       </div>
 
-      <div className="flex items-center gap-2">
-        <button
-          className="btn btn-primary btn-sm flex-1"
-          onClick={run}
-          disabled={loading || totalSamples === 0}
-        >
-          {loading ? 'Computing…' : 'Compute Integration'}
-        </button>
-        <span className={`text-xs ${selectionRange ? 'text-accent-green' : 'text-text-subtle'}`}>
-          {sourceLabel}
-        </span>
-      </div>
+      <button
+        className="btn btn-primary btn-sm"
+        onClick={run}
+        disabled={loading || totalSamples === 0}
+      >
+        {loading ? 'Computing…' : 'Compute Integration'}
+      </button>
 
       {error && <p className="text-xs text-accent-red">{error}</p>}
 

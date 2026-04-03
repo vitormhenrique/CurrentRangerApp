@@ -41,8 +41,11 @@ pub struct PortInfo {
 }
 
 /// Enumerate available serial ports.
+/// Path where the cr-mock binary advertises its PTY slave path.
+const MOCK_PORT_FILE: &str = "/tmp/cr-mock.port";
+
 pub fn list_serial_ports() -> Vec<PortInfo> {
-    serialport::available_ports()
+    let mut ports: Vec<PortInfo> = serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
         .map(|p| {
@@ -61,7 +64,25 @@ pub fn list_serial_ports() -> Vec<PortInfo> {
                 pid,
             }
         })
-        .collect()
+        .collect();
+
+    // Inject the mock PTY if cr-mock is running (it writes its slave path here).
+    if let Ok(path) = std::fs::read_to_string(MOCK_PORT_FILE) {
+        let path = path.trim().to_string();
+        if !path.is_empty() && std::path::Path::new(&path).exists() {
+            // Only add if not already present (avoids duplicates on real ports).
+            if !ports.iter().any(|p| p.name == path) {
+                ports.insert(0, PortInfo {
+                    name: path,
+                    description: "CurrentRanger Mock".to_string(),
+                    vid: None,
+                    pid: None,
+                });
+            }
+        }
+    }
+
+    ports
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -102,6 +123,70 @@ pub enum ReaderCommand {
 // ─────────────────────────────────────────────────────────────────────────────
 // SerialManager
 // ─────────────────────────────────────────────────────────────────────────────
+
+// ── PTY-aware port opening ────────────────────────────────────────────────────
+
+/// Returns true for PTY slave device paths that the `serialport` crate cannot
+/// open on macOS because IOSSIOSPEED (IOKit baud-rate ioctl) is unsupported.
+///   macOS: /dev/ttysN   (N = one or more digits, no dot)
+///   Linux: /dev/pts/N
+fn is_pty_slave_path(path: &str) -> bool {
+    let bare = path.trim_start_matches("/dev/");
+    // macOS pseudo-terminals: ttys0, ttys12, …
+    let is_mac_pty = bare.starts_with("ttys")
+        && bare.len() > 4
+        && bare[4..].chars().all(|c| c.is_ascii_digit());
+    // Linux devpts: pts/0, pts/12, …
+    let is_linux_pty = bare.starts_with("pts/")
+        && bare[4..].chars().all(|c| c.is_ascii_digit());
+    is_mac_pty || is_linux_pty
+}
+
+/// Open a PTY slave without using the IOSSIOSPEED ioctl.
+/// We open the fd with libc, configure raw termios, then wrap it with
+/// `serialport::TTYPort::from_raw_fd` which performs no additional ioctls.
+#[cfg(unix)]
+fn open_pty_slave(path: &str) -> Result<Box<dyn serialport::SerialPort>, String> {
+    use std::os::unix::io::FromRawFd;
+
+    let path_c = std::ffi::CString::new(path)
+        .map_err(|e| format!("Invalid path {path}: {e}"))?;
+
+    let fd = unsafe {
+        libc::open(
+            path_c.as_ptr(),
+            libc::O_RDWR | libc::O_NOCTTY | libc::O_NONBLOCK,
+        )
+    };
+    if fd < 0 {
+        return Err(format!(
+            "Failed to open PTY {path}: {}",
+            std::io::Error::last_os_error()
+        ));
+    }
+
+    // Configure raw termios — baud rate is ignored by PTYs but must be valid.
+    unsafe {
+        let mut tios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut tios) == 0 {
+            libc::cfmakeraw(&mut tios);
+            // B115200 is widely supported; PTY ignores the actual rate.
+            libc::cfsetispeed(&mut tios, libc::B115200);
+            libc::cfsetospeed(&mut tios, libc::B115200);
+            libc::tcsetattr(fd, libc::TCSANOW, &tios);
+        }
+    }
+
+    // from_raw_fd wraps the fd without calling TIOCEXCL or IOSSIOSPEED.
+    // It sets a default 100 ms read timeout, matching our normal open path.
+    let port = unsafe { serialport::TTYPort::from_raw_fd(fd) };
+    Ok(Box::new(port))
+}
+
+#[cfg(not(unix))]
+fn open_pty_slave(path: &str) -> Result<Box<dyn serialport::SerialPort>, String> {
+    Err(format!("PTY connections are not supported on this platform ({path})"))
+}
 
 pub struct SerialManager {
     pub status: ConnectionStatus,
@@ -149,37 +234,48 @@ impl SerialManager {
         self.status.error = None;
         self.emit_status(&app);
 
-        // On macOS, prefer /dev/cu.* over /dev/tty.* to avoid blocking on DCD
-        let port_name_adjusted = if cfg!(target_os = "macos") && port_name.contains("/dev/tty.") {
+        // On macOS, prefer /dev/cu.* over /dev/tty.* to avoid blocking on DCD.
+        // PTY slave paths (/dev/ttysN on macOS, /dev/pts/N on Linux) must NOT be
+        // rewritten — they are not dot-separated and have no /dev/cu.* equivalent.
+        let port_name_adjusted = if cfg!(target_os = "macos")
+            && port_name.contains("/dev/tty.")
+            && !is_pty_slave_path(&port_name)
+        {
             port_name.replace("/dev/tty.", "/dev/cu.")
         } else {
             port_name.clone()
         };
 
-        // Open port — use a blocking call in a spawn_blocking to avoid blocking the async executor
-        let port_name_clone = port_name_adjusted.clone();
-        let port_result = tokio::task::spawn_blocking(move || {
-            serialport::new(&port_name_clone, baud)
-                .timeout(Duration::from_millis(100))
-                .data_bits(serialport::DataBits::Eight)
-                .stop_bits(serialport::StopBits::One)
-                .parity(serialport::Parity::None)
-                .flow_control(serialport::FlowControl::None)
-                .open()
-        })
-        .await;
+        // PTY slaves (created by cr-mock) can't use serialport::open() because macOS
+        // uses the IOSSIOSPEED IOKit ioctl to set the baud rate, which PTY slaves
+        // don't support and returns ENOTTY ("not a typewriter").
+        // For PTY paths we open the fd manually and wrap it with TTYPort::from_raw_fd,
+        // which skips all IOKit ioctls and uses only standard POSIX termios.
+        let open_result: Result<Box<dyn serialport::SerialPort>, String> =
+            if is_pty_slave_path(&port_name_adjusted) {
+                open_pty_slave(&port_name_adjusted)
+            } else {
+                let port_name_clone = port_name_adjusted.clone();
+                let r = tokio::task::spawn_blocking(move || {
+                    serialport::new(&port_name_clone, baud)
+                        .timeout(Duration::from_millis(100))
+                        .data_bits(serialport::DataBits::Eight)
+                        .stop_bits(serialport::StopBits::One)
+                        .parity(serialport::Parity::None)
+                        .flow_control(serialport::FlowControl::None)
+                        .open()
+                })
+                .await;
+                match r {
+                    Ok(Ok(p))  => Ok(p),
+                    Ok(Err(e)) => Err(format!("Failed to open {}: {}", port_name, e)),
+                    Err(e)     => Err(format!("Spawn error: {}", e)),
+                }
+            };
 
-        let port = match port_result {
-            Ok(Ok(p)) => p,
-            Ok(Err(e)) => {
-                let msg = format!("Failed to open {}: {}", port_name, e);
-                self.status.state = ConnectionState::Error;
-                self.status.error = Some(msg.clone());
-                self.emit_status(&app);
-                return Err(msg);
-            }
-            Err(e) => {
-                let msg = format!("Spawn error: {}", e);
+        let port = match open_result {
+            Ok(p) => p,
+            Err(msg) => {
                 self.status.state = ConnectionState::Error;
                 self.status.error = Some(msg.clone());
                 self.emit_status(&app);

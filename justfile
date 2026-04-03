@@ -2,9 +2,10 @@
 # Requires: just, cargo, node/npm
 # Install just: cargo install just  OR  brew install just
 
-app_dir := justfile_directory()
+app_dir      := justfile_directory()
 frontend_dir := app_dir
-tauri_dir := app_dir + "/src-tauri"
+tauri_dir    := app_dir + "/src-tauri"
+mock_dir     := app_dir + "/cr-mock"
 
 # Default: list available commands
 default:
@@ -72,3 +73,34 @@ test-verbose:
 # Show Rust dependency tree
 deps:
     cargo tree --manifest-path {{tauri_dir}}/Cargo.toml
+
+# ── Mock device ────────────────────────────────────────────────────────────────
+
+# Build + run the CurrentRanger R3 mock with interactive TUI (auto-creates a PTY)
+mock:
+    cargo run --manifest-path {{mock_dir}}/Cargo.toml
+
+# Build + run the mock on a specific serial port  (e.g.: just mock-port /dev/ttyUSB0)
+mock-port PORT:
+    cargo run --manifest-path {{mock_dir}}/Cargo.toml -- {{PORT}}
+
+# Build the mock in release mode (faster sample generation)
+mock-build:
+    cargo build --release --manifest-path {{mock_dir}}/Cargo.toml
+
+# Run the release build of the mock
+mock-release:
+    cargo build --release --manifest-path {{mock_dir}}/Cargo.toml
+    {{mock_dir}}/target/release/cr-mock
+
+# Run the release build of the mock on a specific port
+mock-release-port PORT:
+    cargo build --release --manifest-path {{mock_dir}}/Cargo.toml
+    {{mock_dir}}/target/release/cr-mock {{PORT}}
+
+# Run app + mock side-by-side (two panes — requires tmux)
+dev-with-mock:
+    tmux new-session \; \
+        send-keys "just mock" C-m \; \
+        split-window -h \; \
+        send-keys "sleep 1 && just dev" C-m

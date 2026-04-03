@@ -286,94 +286,6 @@ export default function LiveChart() {
     });
     ro.observe(containerRef.current);
 
-    const canvas = containerRef.current.querySelector('canvas');
-
-    // ── Left-click: load range-marker stats OR clear selection ───────────────
-    const handleCanvasClick = (e: MouseEvent) => {
-      if (markerPopupOpenRef.current) return;
-      const sel = u.select;
-      if (sel.width > 4) return; // drag handled by setSelect
-
-      const rect = (e.target as HTMLElement).getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const ts = u.posToVal(px, 'x');
-      if (!isFinite(ts)) return;
-
-      // Hit-test saved range markers → load their stats as selection
-      const hit = markersRef.current.find(
-        (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
-      );
-      if (hit) {
-        setSelectionRange([hit.timestamp, hit.endTimestamp!]);
-        const { ts: bufTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
-        let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
-        for (let i = 0; i < bufTs.length; i++) {
-          if (bufTs[i] >= hit.timestamp && bufTs[i] <= hit.endTimestamp!) {
-            sum += amps[i]; mn = Math.min(mn, amps[i]); mx = Math.max(mx, amps[i]); cnt++;
-          }
-        }
-        if (cnt > 0) {
-          setSelectionStats({
-            count: cnt, avgAmps: sum / cnt, minAmps: mn, maxAmps: mx,
-            durationS: hit.endTimestamp! - hit.timestamp,
-            rateHz: cnt / Math.max(hit.endTimestamp! - hit.timestamp, 1e-6),
-          });
-        }
-        return;
-      }
-
-      // Clicking empty area: clear any active selection
-      if (useAppStore.getState().selectionRange != null) {
-        setSelectionRange(null);
-        setSelectionStats(null);
-        u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-      }
-    };
-
-    // ── Right-click: open add-marker popup (always available) ────────────────
-    const handleCanvasContextMenu = (e: MouseEvent) => {
-      e.preventDefault();
-      if (markerPopupOpenRef.current) return;
-
-      const rect = (e.target as HTMLElement).getBoundingClientRect();
-      const px = e.clientX - rect.left;
-      const ts = u.posToVal(px, 'x');
-      if (!isFinite(ts)) return;
-
-      const containerRect = containerRef.current!.getBoundingClientRect();
-      const popX = e.clientX - containerRect.left;
-      const popY = e.clientY - containerRect.top;
-
-      setMarkerLabel('');
-      setMarkerNote('');
-      setMarkerCategory('note');
-
-      // Right-click inside active drag selection → pre-fill as range marker
-      const sel = u.select;
-      if (sel.width > 4) {
-        const t0 = u.posToVal(sel.left, 'x');
-        const t1 = u.posToVal(sel.left + sel.width, 'x');
-        setMarkerPopup({ x: popX, y: popY, ts: t0, tsEnd: t1 });
-        setTimeout(() => markerInputRef.current?.focus(), 50);
-        return;
-      }
-
-      // Right-click inside a saved range marker → pre-fill with that range
-      const hit = markersRef.current.find(
-        (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
-      );
-      if (hit) {
-        setMarkerPopup({ x: popX, y: popY, ts: hit.timestamp, tsEnd: hit.endTimestamp });
-      } else {
-        // Right-click on empty area → point marker at cursor
-        setMarkerPopup({ x: popX, y: popY, ts });
-      }
-      setTimeout(() => markerInputRef.current?.focus(), 50);
-    };
-
-    canvas?.addEventListener('click', handleCanvasClick);
-    canvas?.addEventListener('contextmenu', handleCanvasContextMenu);
-
     // 'M' key → add marker at cursor (or selection range) while hovering
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key !== 'm' && e.key !== 'M') || e.ctrlKey || e.metaKey || e.altKey) return;
@@ -399,8 +311,6 @@ export default function LiveChart() {
 
     return () => {
       ro.disconnect();
-      canvas?.removeEventListener('click', handleCanvasClick);
-      canvas?.removeEventListener('contextmenu', handleCanvasContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
       u.destroy();
       plotRef.current = null;
@@ -641,6 +551,93 @@ export default function LiveChart() {
     setMarkerPopup(null);
   };
 
+  // ── React-level pointer handlers (bypass native WebView context menu) ──────
+
+  const handleChartClick = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    const u = plotRef.current;
+    if (!u || markerPopupOpenRef.current) return;
+    const sel = u.select;
+    if (sel.width > 4) return; // drag selection handled by uPlot setSelect hook
+
+    const rect = u.over.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    // Ignore clicks outside the plot area (axes, padding)
+    if (px < 0 || px > rect.width) return;
+    const ts = u.posToVal(px, 'x');
+    if (!isFinite(ts)) return;
+
+    // Hit-test saved range markers → load their stats as selection
+    const hit = markersRef.current.find(
+      (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
+    );
+    if (hit) {
+      setSelectionRange([hit.timestamp, hit.endTimestamp!]);
+      const { ts: bufTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+      let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
+      for (let i = 0; i < bufTs.length; i++) {
+        if (bufTs[i] >= hit.timestamp && bufTs[i] <= hit.endTimestamp!) {
+          sum += amps[i]; mn = Math.min(mn, amps[i]); mx = Math.max(mx, amps[i]); cnt++;
+        }
+      }
+      if (cnt > 0) {
+        setSelectionStats({
+          count: cnt, avgAmps: sum / cnt, minAmps: mn, maxAmps: mx,
+          durationS: hit.endTimestamp! - hit.timestamp,
+          rateHz: cnt / Math.max(hit.endTimestamp! - hit.timestamp, 1e-6),
+        });
+      }
+      return;
+    }
+
+    // Click on empty area → clear selection
+    if (useAppStore.getState().selectionRange != null) {
+      setSelectionRange(null);
+      setSelectionStats(null);
+      u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+    }
+  }, [setSelectionRange, setSelectionStats]);
+
+  const handleChartContextMenu = useCallback((e: React.MouseEvent<HTMLDivElement>) => {
+    e.preventDefault();
+    const u = plotRef.current;
+    if (!u || markerPopupOpenRef.current) return;
+
+    const rect = u.over.getBoundingClientRect();
+    const px = e.clientX - rect.left;
+    if (px < 0 || px > rect.width) return;
+    const ts = u.posToVal(px, 'x');
+    if (!isFinite(ts)) return;
+
+    const containerRect = containerRef.current!.getBoundingClientRect();
+    const popX = e.clientX - containerRect.left;
+    const popY = e.clientY - containerRect.top;
+
+    setMarkerLabel('');
+    setMarkerNote('');
+    setMarkerCategory('note');
+
+    // Inside active drag selection → range marker pre-filled with that selection
+    const sel = u.select;
+    if (sel.width > 4) {
+      const t0 = u.posToVal(sel.left, 'x');
+      const t1 = u.posToVal(sel.left + sel.width, 'x');
+      setMarkerPopup({ x: popX, y: popY, ts: t0, tsEnd: t1 });
+      setTimeout(() => markerInputRef.current?.focus(), 50);
+      return;
+    }
+
+    // Inside a saved range marker → pre-fill with that range
+    const hit = markersRef.current.find(
+      (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
+    );
+    if (hit) {
+      setMarkerPopup({ x: popX, y: popY, ts: hit.timestamp, tsEnd: hit.endTimestamp });
+    } else {
+      setMarkerPopup({ x: popX, y: popY, ts });
+    }
+    setTimeout(() => markerInputRef.current?.focus(), 50);
+  }, []);
+
   return (
     <div className="panel flex-1 overflow-hidden flex flex-col">
       {/* Toolbar */}
@@ -744,6 +741,8 @@ export default function LiveChart() {
         className="flex-1 overflow-hidden rounded relative min-h-0"
         onMouseEnter={() => { isHoveringRef.current = true; }}
         onMouseLeave={() => { isHoveringRef.current = false; }}
+        onClick={handleChartClick}
+        onContextMenu={handleChartContextMenu}
       >
         <div
           ref={containerRef}
