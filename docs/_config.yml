@@ -1,0 +1,30 @@
+title: CurrentRanger App
+description: Desktop companion for the CurrentRanger R3 precision current meter
+remote_theme: just-the-docs/just-the-docs
+
+url: https://vitormhenrique.github.io
+baseurl: /CurrentRangerApp
+
+aux_links:
+  "GitHub":
+    - "https://github.com/vitormhenrique/CurrentRangerApp"
+
+aux_links_new_tab: true
+
+nav_sort: order
+
+heading_anchors: true
+
+back_to_top: true
+back_to_top_text: "Back to top"
+
+footer_content: >-
+  CurrentRanger App &mdash; Built with <a href="https://tauri.app">Tauri</a> + React.
+  <a href="https://lowpowerlab.com/currentranger">CurrentRanger Hardware</a> &bull;
+  <a href="https://www.paypal.com/donate/?business=NT46DHPPPSBBU&no_recurring=0&item_name=buy+me+a+coffee&currency_code=USD">Buy me a coffee</a>
+
+color_scheme: dark
+
+search_enabled: true
+
+permalink: pretty

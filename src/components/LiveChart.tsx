@@ -492,10 +492,10 @@ export default function LiveChart() {
     // If buffer is empty (e.g. after Clear), reset the chart and minimap
     if (n === 0) {
       programmaticScale.current = true;
-      u.setData([[0], [null]] as uPlot.AlignedData, false);
+      // uPlot needs at least one data point to clear properly; use null for a blank chart
+      u.setData([[0, 1], [null, null]] as uPlot.AlignedData, false);
       u.setScale('x', { min: 0, max: 1 });
       u.setScale('y', { min: 0, max: 1 });
-      u.setData([[], []], false);
       programmaticScale.current = false;
       setLiveValue(null);
       setViewStats(null);

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Device Configuration
+nav_order: 8
+---
+
 # Device Configuration
 
 ## Overview

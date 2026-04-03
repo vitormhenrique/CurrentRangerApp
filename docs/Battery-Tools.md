@@ -1,3 +1,9 @@
+---
+layout: default
+title: Battery Tools
+nav_order: 7
+---
+
 # Battery Tools
 
 ## Overview

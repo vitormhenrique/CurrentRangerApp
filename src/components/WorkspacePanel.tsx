@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { Save, FolderOpen, Download, Trash2 } from 'lucide-react';
+import { ask } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../store';
 import { api, pickSaveCsv, pickSaveJson, pickSaveWorkspace, pickOpenWorkspace } from '../api/tauri';
 
@@ -9,7 +10,6 @@ export default function WorkspacePanel() {
   const { settings, markers, appendStatusLog, loadSamplesFromBackend, setMarkers, setSettings } =
     useAppStore();
   const [busy, setBusy] = useState(false);
-  const [confirmClear, setConfirmClear] = useState(false);
 
   const run = async (fn: () => Promise<void>) => {
     setBusy(true);
@@ -74,23 +74,17 @@ export default function WorkspacePanel() {
       </button>
       <div className="h-4 w-px bg-surface-200" />
       <button
-        className={`btn btn-sm text-xs flex items-center gap-1 ${confirmClear ? 'btn-danger animate-pulse' : 'btn-danger'}`}
+        className="btn btn-danger btn-sm text-xs flex items-center gap-1"
         disabled={busy}
-        onClick={() => {
-          if (!confirmClear) {
-            setConfirmClear(true);
-            // Auto-cancel after 3 seconds
-            setTimeout(() => setConfirmClear(false), 3000);
-            return;
-          }
-          setConfirmClear(false);
-          api.clearSamples().then(() => {
-            useAppStore.getState().clearSamples();
-            appendStatusLog('Samples cleared');
-          });
+        onClick={async () => {
+          const yes = await ask('Clear all samples?', { title: 'Confirm Clear', kind: 'warning' });
+          if (!yes) return;
+          await api.clearSamples();
+          useAppStore.getState().clearSamples();
+          appendStatusLog('Samples cleared');
         }}
       >
-        <Trash2 size={12} /> {confirmClear ? 'Confirm?' : 'Clear'}
+        <Trash2 size={12} /> Clear
       </button>
     </div>
   );

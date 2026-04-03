@@ -1,3 +1,9 @@
+---
+layout: default
+title: Charge and Energy Integration
+nav_order: 6
+---
+
 # Charge and Energy Integration
 
 ## Overview

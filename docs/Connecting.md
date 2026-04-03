@@ -1,3 +1,9 @@
+---
+layout: default
+title: Connecting to a Device
+nav_order: 3
+---
+
 # Connecting to a Device
 
 ## Auto-Detection

@@ -1,3 +1,9 @@
+---
+layout: default
+title: Mock Device
+nav_order: 10
+---
+
 # Mock Device for Testing
 
 ## Overview

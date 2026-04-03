@@ -1,3 +1,9 @@
+---
+layout: default
+title: Live Chart
+nav_order: 4
+---
+
 # Live Chart
 
 ## Overview

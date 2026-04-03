@@ -1,3 +1,9 @@
+---
+layout: default
+title: Keyboard Shortcuts
+nav_order: 11
+---
+
 # Keyboard Shortcuts
 
 ## Chart

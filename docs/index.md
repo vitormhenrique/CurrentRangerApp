@@ -1,3 +1,10 @@
+---
+layout: default
+title: Home
+nav_order: 1
+permalink: /
+---
+
 # CurrentRanger App
 
 A desktop companion application for the [CurrentRanger R3](https://lowpowerlab.com/currentranger) precision current meter.
@@ -18,16 +25,16 @@ Built with **Rust + Tauri v2**, **React + TypeScript**, and **uPlot** for high-p
 
 ## Pages
 
-- [Getting Started](Getting-Started)
-- [Connecting to a Device](Connecting)
-- [Live Chart](Live-Chart)
-- [Markers and Annotations](Markers)
-- [Charge and Energy Integration](Integration)
-- [Battery Tools](Battery-Tools)
-- [Device Configuration](Device-Config)
-- [Workspaces and Export](Workspaces)
-- [Mock Device for Testing](Mock-Device)
-- [Keyboard Shortcuts](Keyboard-Shortcuts)
+- [Getting Started]({% link Getting-Started.md %})
+- [Connecting to a Device]({% link Connecting.md %})
+- [Live Chart]({% link Live-Chart.md %})
+- [Markers and Annotations]({% link Markers.md %})
+- [Charge and Energy Integration]({% link Integration.md %})
+- [Battery Tools]({% link Battery-Tools.md %})
+- [Device Configuration]({% link Device-Config.md %})
+- [Workspaces and Export]({% link Workspaces.md %})
+- [Mock Device for Testing]({% link Mock-Device.md %})
+- [Keyboard Shortcuts]({% link Keyboard-Shortcuts.md %})
 
 ## Links
 
