@@ -24,6 +24,24 @@ import WorkspacePanel from './components/WorkspacePanel';
 import IntegrationPanel from './components/IntegrationPanel';
 import StatusBar from './components/StatusBar';
 
+// Score ports — higher = better match for CurrentRanger
+function pickBestPort(ports: { name: string; description?: string; vid?: number }[]) {
+  const scored = ports.map((p) => {
+    const name = p.name.toLowerCase();
+    const desc = (p.description ?? '').toLowerCase();
+    let score = 0;
+    if (desc.includes('currentranger')) score += 10;
+    if (p.vid === 0x239a) score += 8;   // Adafruit VID used by CurrentRanger R3
+    if (name.includes('usbmodem'))       score += 4;
+    if (name.includes('cu.usb'))         score += 3;  // prefer cu.* over tty.* on macOS
+    if (name.includes('ttyacm'))         score += 3;
+    if (name.includes('ttyusb'))         score += 2;
+    return { p, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.score > 0 ? scored[0].p : null;
+}
+
 export default function App() {
   const {
     setPorts,
@@ -45,13 +63,7 @@ export default function App() {
     (async () => {
       const ports = await api.listPorts();
       setPorts(ports);
-      const firstPort = ports.find(
-        (p) =>
-          p.name.toLowerCase().includes('usbmodem') ||
-          p.name.toLowerCase().includes('ttyacm') ||
-          (p.description || '').toLowerCase().includes('currentranger') ||
-          p.vid === 0x239a,
-      );
+      const firstPort = pickBestPort(ports);
       if (firstPort) {
         useAppStore.getState().setSelectedPort(firstPort.name);
       } else if (ports[0]) {
@@ -118,7 +130,7 @@ export default function App() {
   return (
     <div className="flex flex-col h-screen overflow-hidden bg-base-100 text-text select-none">
       {/* ── Top bar ──────────────────────────────────────────────────────── */}
-      <header className="flex-none bg-base-200 border-b border-surface-200 px-3 h-11 flex items-center gap-3">
+      <header className="flex-none bg-base-200 border-b border-surface-200 px-3 h-11 flex items-center gap-3 relative z-50">
         {/* Logo */}
         <div className="flex items-center gap-2 flex-none">
           <img src="/icon.svg" className="w-5 h-5" alt="" />

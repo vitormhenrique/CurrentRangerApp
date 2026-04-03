@@ -8,6 +8,23 @@ import clsx from 'clsx';
 
 const BAUD_OPTIONS = [230400, 115200, 57600, 9600];
 
+function pickBestPort(ports: { name: string; description?: string; vid?: number }[]) {
+  const scored = ports.map((p) => {
+    const name = p.name.toLowerCase();
+    const desc = (p.description ?? '').toLowerCase();
+    let score = 0;
+    if (desc.includes('currentranger')) score += 10;
+    if (p.vid === 0x239a) score += 8;
+    if (name.includes('usbmodem'))       score += 4;
+    if (name.includes('cu.usb'))         score += 3;
+    if (name.includes('ttyacm'))         score += 3;
+    if (name.includes('ttyusb'))         score += 2;
+    return { p, score };
+  });
+  scored.sort((a, b) => b.score - a.score);
+  return scored[0]?.score > 0 ? scored[0].p : null;
+}
+
 export default function DevicePanel() {
   const {
     ports,
@@ -18,6 +35,7 @@ export default function DevicePanel() {
     setCurrentView,
     connectionStatus,
     setConnectionStatus,
+    setPaused,
   } = useAppStore();
 
   const isConnected = useAppStore(selectIsConnected);
@@ -29,13 +47,7 @@ export default function DevicePanel() {
     const ps = await api.listPorts();
     setPorts(ps);
     if (!isConnected) {
-      const match = ps.find(
-        (p) =>
-          p.name.toLowerCase().includes('usbmodem') ||
-          p.name.toLowerCase().includes('ttyacm') ||
-          (p.description || '').toLowerCase().includes('currentranger') ||
-          p.vid === 0x239a,
-      );
+      const match = pickBestPort(ps);
       if (match) setSelectedPort(match.name);
     }
   };
@@ -196,12 +208,16 @@ export default function DevicePanel() {
           <div className="divider" />
           <div className="panel-title">Quick Controls</div>
 
-          {/* USB logging toggle */}
+          {/* USB logging toggle — enabling logging also resumes the chart */}
           <div className="flex items-center justify-between">
             <span className="text-xs text-text-muted">USB Logging</span>
             <button
               className={clsx('btn btn-sm', deviceStatus.usbLogging ? 'btn-success' : 'btn-ghost')}
-              onClick={() => send('u')}
+              onClick={async () => {
+                const willEnable = !deviceStatus.usbLogging;
+                await send('u');
+                if (willEnable) setPaused(false);
+              }}
             >
               {deviceStatus.usbLogging ? 'ON' : 'OFF'}
             </button>

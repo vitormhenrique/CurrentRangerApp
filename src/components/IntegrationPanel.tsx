@@ -1,12 +1,12 @@
 // src/components/IntegrationPanel.tsx — Charge and energy integration
 
 import { useState } from 'react';
-import { useAppStore } from '../store';
+import { useAppStore, getOrderedSlice } from '../store';
 import { api } from '../api/tauri';
 import { formatCurrent, formatDuration } from '../types';
 
 export default function IntegrationPanel() {
-  const { settings, setSettings, integrationResult, setIntegrationResult, totalSamples } =
+  const { settings, setSettings, integrationResult, setIntegrationResult, totalSamples, selectionRange } =
     useAppStore();
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -15,10 +15,32 @@ export default function IntegrationPanel() {
     setLoading(true);
     setError('');
     try {
-      const data = await api.getSamples();
+      let timestamps: number[];
+      let amps: number[];
+
+      if (selectionRange) {
+        // Use only samples within the selected time range (frontend buffer)
+        const [t0, t1] = selectionRange;
+        const slice = getOrderedSlice(useAppStore.getState().sampleBuffer);
+        const filtered = { ts: [] as number[], amps: [] as number[] };
+        for (let i = 0; i < slice.ts.length; i++) {
+          if (slice.ts[i] >= t0 && slice.ts[i] <= t1) {
+            filtered.ts.push(slice.ts[i]);
+            filtered.amps.push(slice.amps[i]);
+          }
+        }
+        timestamps = filtered.ts;
+        amps = filtered.amps;
+      } else {
+        // Use all backend samples
+        const data = await api.getSamples();
+        timestamps = data.timestamps;
+        amps = data.amps;
+      }
+
       const result = await api.computeIntegration({
-        timestamps: data.timestamps,
-        amps: data.amps,
+        timestamps,
+        amps,
         voltage: settings.voltageV,
       });
       setIntegrationResult(result);
@@ -30,6 +52,7 @@ export default function IntegrationPanel() {
   };
 
   const r = integrationResult;
+  const sourceLabel = selectionRange ? '← selection' : '← all data';
 
   return (
     <div className="panel">
@@ -49,13 +72,18 @@ export default function IntegrationPanel() {
         <span className="text-xs text-text-muted">V</span>
       </div>
 
-      <button
-        className="btn btn-primary btn-sm"
-        onClick={run}
-        disabled={loading || totalSamples === 0}
-      >
-        {loading ? 'Computing…' : 'Compute Integration'}
-      </button>
+      <div className="flex items-center gap-2">
+        <button
+          className="btn btn-primary btn-sm flex-1"
+          onClick={run}
+          disabled={loading || totalSamples === 0}
+        >
+          {loading ? 'Computing…' : 'Compute Integration'}
+        </button>
+        <span className={`text-xs ${selectionRange ? 'text-accent-green' : 'text-text-subtle'}`}>
+          {sourceLabel}
+        </span>
+      </div>
 
       {error && <p className="text-xs text-accent-red">{error}</p>}
 

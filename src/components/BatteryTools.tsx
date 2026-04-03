@@ -42,7 +42,9 @@ function DeratRow({
 }
 
 export default function BatteryTools() {
-  const { viewStats } = useAppStore();
+  const { viewStats, selectionStats, selectionRange } = useAppStore();
+  // Prefer selection stats when a range is active, otherwise fall back to full view
+  const activeStats = selectionRange ? selectionStats : viewStats;
   const [mode, setMode] = useState<'runtime' | 'capacity'>('runtime');
   const [capacityMah, setCapacityMah] = useState(1000);
   const [desiredRuntimeH, setDesiredRuntimeH] = useState(24);
@@ -58,7 +60,7 @@ export default function BatteryTools() {
 
   const avgCurrentAmps = manualCurrentMa
     ? Number(manualCurrentMa) / 1000
-    : (viewStats?.avgAmps ?? 0);
+    : (activeStats?.avgAmps ?? 0);
 
   const compute = async () => {
     setError('');
@@ -113,8 +115,10 @@ export default function BatteryTools() {
       <div className="flex items-center gap-2">
         <label className="text-xs text-text-subtle flex-1">
           Current (mA)
-          {viewStats && !manualCurrentMa && (
-            <span className="ml-1 text-accent-green">← from chart</span>
+          {activeStats && !manualCurrentMa && (
+            <span className={`ml-1 ${selectionRange ? 'text-accent-teal' : 'text-accent-green'}`}>
+              {selectionRange ? '← selection' : '← chart'}
+            </span>
           )}
         </label>
         <input

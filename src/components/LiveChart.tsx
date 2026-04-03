@@ -39,9 +39,9 @@ function formatYAxis(amps: number): string {
 }
 
 export default function LiveChart() {
-  const containerRef  = useRef<HTMLDivElement>(null);
-  const plotRef       = useRef<uPlot | null>(null);
-  const minimapRef    = useRef<HTMLCanvasElement>(null);
+  const containerRef       = useRef<HTMLDivElement>(null);
+  const plotRef            = useRef<uPlot | null>(null);
+  const minimapRef         = useRef<HTMLCanvasElement>(null);
   const viewportRef        = useRef<[number, number] | null>(null);
   const cursorTsRef        = useRef<number | null>(null);
   const isHoveringRef      = useRef(false);
@@ -51,6 +51,10 @@ export default function LiveChart() {
   const pausedRef          = useRef(false);
   const connectedRef       = useRef(false);
   const disabledUsbOnPause = useRef(false);
+  // Tracks whether a setScale('x') call is from our render loop (not user pan/zoom)
+  const programmaticScale  = useRef(false);
+  // Mirrors yAutoScale state for use inside uPlot hook closures
+  const yAutoScaleRef      = useRef(true);
 
   const {
     paused,
@@ -65,6 +69,8 @@ export default function LiveChart() {
   } = useAppStore();
 
   const isConnected = useAppStore((s) => s.connectionStatus.state === 'Connected');
+  // Stop the rAF loop when on device-config to keep that view responsive
+  const currentView = useAppStore((s) => s.currentView);
 
   const [liveValue, setLiveValue] = useState<number | null>(null);
 
@@ -91,6 +97,7 @@ export default function LiveChart() {
   // Keep refs in sync for event handlers created in useLayoutEffect
   useEffect(() => { pausedRef.current = paused; }, [paused]);
   useEffect(() => { connectedRef.current = isConnected; }, [isConnected]);
+  useEffect(() => { yAutoScaleRef.current = yAutoScale; }, [yAutoScale]);
 
   // Sync markers ref and redraw when markers change
   useEffect(() => {
@@ -107,7 +114,7 @@ export default function LiveChart() {
 
     const opts: uPlot.Options = {
       width: containerRef.current.clientWidth,
-      height: containerRef.current.clientHeight - 0,
+      height: containerRef.current.clientHeight,
       padding: [8, 12, 0, 0],
       legend: { show: false },
       cursor: {
@@ -144,19 +151,42 @@ export default function LiveChart() {
         },
       ],
       scales: {
-        x: { time: false }, // we use raw unix seconds — label as relative
+        x: { time: false },
         y: { auto: true },
       },
       hooks: {
         setScale: [
           (u, scaleKey) => {
-            if (scaleKey === 'x') {
-              const { min, max } = u.scales.x;
-              if (min != null && max != null) {
-                viewportRef.current = [min, max];
+            if (scaleKey !== 'x') return;
+            const { min, max } = u.scales.x;
+            if (min != null && max != null) {
+              viewportRef.current = [min, max];
+
+              // Only react to user-initiated pan/zoom, not our own renderFrame calls
+              if (!programmaticScale.current) {
+                // Clear drag-selection box and store selection
+                u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+                useAppStore.getState().setSelectionRange(null);
+                useAppStore.getState().setSelectionStats(null);
+
+                // Recompute Y scale from data visible in the new X range
+                if (yAutoScaleRef.current) {
+                  const { ts, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+                  let yLo = Infinity, yHi = -Infinity;
+                  for (let i = 0; i < ts.length; i++) {
+                    if (ts[i] >= min && ts[i] <= max) {
+                      if (amps[i] < yLo) yLo = amps[i];
+                      if (amps[i] > yHi) yHi = amps[i];
+                    }
+                  }
+                  if (isFinite(yLo) && isFinite(yHi)) {
+                    const yMargin = Math.max((yHi - yLo) * 0.1, Math.abs(yHi) * 0.1, 1e-6);
+                    u.setScale('y', { min: yLo - yMargin, max: yHi + yMargin });
+                  }
+                }
               }
-              drawMinimap();
             }
+            drawMinimap();
           },
         ],
         setCursor: [
@@ -194,7 +224,6 @@ export default function LiveChart() {
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1.5;
                 ctx.beginPath(); ctx.moveTo(x0, top); ctx.lineTo(x0, top + height); ctx.stroke();
-                // Triangle cap
                 ctx.fillStyle = color;
                 ctx.beginPath();
                 ctx.moveTo(x0 - 5, top);
@@ -222,7 +251,6 @@ export default function LiveChart() {
             const t0 = u.posToVal(sel.left, 'x');
             const t1 = u.posToVal(sel.left + sel.width, 'x');
             setSelectionRange([t0, t1]);
-            // Compute selection stats from buffer (read latest from store)
             const { ts, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
             let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
             for (let i = 0; i < ts.length; i++) {
@@ -258,27 +286,24 @@ export default function LiveChart() {
     });
     ro.observe(containerRef.current);
 
-    // Click on chart → hit-test range markers or open add-marker popup
-    // Only allowed when paused or not actively receiving data
     const canvas = containerRef.current.querySelector('canvas');
-    const handleCanvasClick = (e: MouseEvent) => {
-      // Don't open marker popup during live capture
-      if (connectedRef.current && !pausedRef.current) return;
 
+    // ── Left-click: load range-marker stats OR clear selection ───────────────
+    const handleCanvasClick = (e: MouseEvent) => {
+      if (markerPopupOpenRef.current) return;
       const sel = u.select;
-      if (sel.width > 4) return;
+      if (sel.width > 4) return; // drag handled by setSelect
 
       const rect = (e.target as HTMLElement).getBoundingClientRect();
       const px = e.clientX - rect.left;
       const ts = u.posToVal(px, 'x');
       if (!isFinite(ts)) return;
 
-      // Hit-test range markers first
+      // Hit-test saved range markers → load their stats as selection
       const hit = markersRef.current.find(
         (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
       );
       if (hit) {
-        // Load that range's stats
         setSelectionRange([hit.timestamp, hit.endTimestamp!]);
         const { ts: bufTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
         let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
@@ -297,45 +322,73 @@ export default function LiveChart() {
         return;
       }
 
+      // Clicking empty area: clear any active selection
+      if (useAppStore.getState().selectionRange != null) {
+        setSelectionRange(null);
+        setSelectionStats(null);
+        u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
+      }
+    };
+
+    // ── Right-click: open add-marker popup (always available) ────────────────
+    const handleCanvasContextMenu = (e: MouseEvent) => {
+      e.preventDefault();
+      if (markerPopupOpenRef.current) return;
+
+      const rect = (e.target as HTMLElement).getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const ts = u.posToVal(px, 'x');
+      if (!isFinite(ts)) return;
+
       const containerRect = containerRef.current!.getBoundingClientRect();
-      setMarkerPopup({
-        x: e.clientX - containerRect.left,
-        y: e.clientY - containerRect.top,
-        ts,
-      });
+      const popX = e.clientX - containerRect.left;
+      const popY = e.clientY - containerRect.top;
+
       setMarkerLabel('');
       setMarkerNote('');
       setMarkerCategory('note');
+
+      // Right-click inside active drag selection → pre-fill as range marker
+      const sel = u.select;
+      if (sel.width > 4) {
+        const t0 = u.posToVal(sel.left, 'x');
+        const t1 = u.posToVal(sel.left + sel.width, 'x');
+        setMarkerPopup({ x: popX, y: popY, ts: t0, tsEnd: t1 });
+        setTimeout(() => markerInputRef.current?.focus(), 50);
+        return;
+      }
+
+      // Right-click inside a saved range marker → pre-fill with that range
+      const hit = markersRef.current.find(
+        (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
+      );
+      if (hit) {
+        setMarkerPopup({ x: popX, y: popY, ts: hit.timestamp, tsEnd: hit.endTimestamp });
+      } else {
+        // Right-click on empty area → point marker at cursor
+        setMarkerPopup({ x: popX, y: popY, ts });
+      }
       setTimeout(() => markerInputRef.current?.focus(), 50);
     };
-    canvas?.addEventListener('click', handleCanvasClick);
 
-    // 'M' key → add marker at cursor (or selection range)
-    // Only when paused or not connected
+    canvas?.addEventListener('click', handleCanvasClick);
+    canvas?.addEventListener('contextmenu', handleCanvasContextMenu);
+
+    // 'M' key → add marker at cursor (or selection range) while hovering
     const handleKeyDown = (e: KeyboardEvent) => {
       if ((e.key !== 'm' && e.key !== 'M') || e.ctrlKey || e.metaKey || e.altKey) return;
       if (!isHoveringRef.current) return;
       if (markerPopupOpenRef.current) return;
-      if (connectedRef.current && !pausedRef.current) return;
       const sel = u.select;
       const containerRect = containerRef.current!.getBoundingClientRect();
       if (sel.width > 4) {
         const t0 = u.posToVal(sel.left, 'x');
         const t1 = u.posToVal(sel.left + sel.width, 'x');
-        setMarkerPopup({
-          x: containerRect.width / 2,
-          y: 80,
-          ts: t0,
-          tsEnd: t1,
-        });
+        setMarkerPopup({ x: containerRect.width / 2, y: 80, ts: t0, tsEnd: t1 });
       } else {
         const ts = cursorTsRef.current;
         if (ts == null) return;
-        setMarkerPopup({
-          x: containerRect.width / 2,
-          y: 80,
-          ts,
-        });
+        setMarkerPopup({ x: containerRect.width / 2, y: 80, ts });
       }
       setMarkerLabel('');
       setMarkerNote('');
@@ -347,6 +400,7 @@ export default function LiveChart() {
     return () => {
       ro.disconnect();
       canvas?.removeEventListener('click', handleCanvasClick);
+      canvas?.removeEventListener('contextmenu', handleCanvasContextMenu);
       window.removeEventListener('keydown', handleKeyDown);
       u.destroy();
       plotRef.current = null;
@@ -373,7 +427,6 @@ export default function LiveChart() {
     const tMax = ts[n - 1];
     const tRange = tMax - tMin || 1;
 
-    // Draw range markers as colored fills
     for (const m of markersRef.current) {
       if (m.endTimestamp == null) continue;
       const x0 = ((m.timestamp - tMin) / tRange) * pxW;
@@ -382,7 +435,6 @@ export default function LiveChart() {
       ctx.fillRect(x0, 0, x1 - x0, pxH);
     }
 
-    // Draw downsampled trace
     let minV = Infinity, maxV = -Infinity;
     for (let i = 0; i < n; i++) { minV = Math.min(minV, amps[i]); maxV = Math.max(maxV, amps[i]); }
     const aRange = (maxV - minV) || 1;
@@ -398,7 +450,6 @@ export default function LiveChart() {
     }
     ctx.stroke();
 
-    // Draw point markers
     for (const m of markersRef.current) {
       if (m.endTimestamp != null) continue;
       const x = ((m.timestamp - tMin) / tRange) * pxW;
@@ -407,7 +458,6 @@ export default function LiveChart() {
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, pxH); ctx.stroke();
     }
 
-    // Draw viewport highlight
     const vp = viewportRef.current;
     if (vp) {
       const vx0 = ((vp[0] - tMin) / tRange) * pxW;
@@ -454,17 +504,14 @@ export default function LiveChart() {
     const u = plotRef.current;
     if (!u) return;
 
-    // Read latest buffer directly from store (avoids stale closure)
     const store = useAppStore.getState();
     const { ts: rawTs, amps: rawAmps } = getOrderedSlice(store.sampleBuffer);
     const n = rawTs.length;
     if (n === 0) return;
 
-    // Time window slice
     let startIdx = 0;
     if (timeWindowS > 0) {
       const cutoff = rawTs[n - 1] - timeWindowS;
-      // Binary search for cutoff
       let lo = 0, hi = n - 1;
       while (lo < hi) {
         const mid = (lo + hi) >> 1;
@@ -477,12 +524,10 @@ export default function LiveChart() {
     const visTs = rawTs.subarray(startIdx);
     const visAmps = rawAmps.subarray(startIdx);
     const visN = visTs.length;
-
     if (visN === 0) return;
 
     setLiveValue(visAmps[visN - 1]);
 
-    // Downsample for display (min-max envelope per pixel)
     const maxPts = Math.max((u.width - 60) * 2, 500);
     let dispTs: ArrayLike<number>, dispAmps: ArrayLike<number>;
 
@@ -510,21 +555,18 @@ export default function LiveChart() {
       dispAmps = dAmps.subarray(0, out);
     }
 
+    // Flag our own setScale calls so the hook doesn't treat them as user pan
+    programmaticScale.current = true;
     u.batch(() => {
-      u.setData([
-        Array.from(dispTs),
-        Array.from(dispAmps),
-      ], false);
+      u.setData([Array.from(dispTs), Array.from(dispAmps)], false);
 
       if (!paused) {
         const tMin = visTs[0];
         const tMax = visTs[visN - 1];
         const xPad = Math.max((tMax - tMin) * 0.01, 0.01);
         u.setScale('x', { min: tMin, max: tMax + xPad });
-        viewportRef.current = [tMin, tMax + xPad];
       }
 
-      // Apply Y-axis scale
       if (!yAutoScale) {
         const yMinVal = parseFloat(yMin);
         const yMaxVal = parseFloat(yMax);
@@ -532,7 +574,6 @@ export default function LiveChart() {
           u.setScale('y', { min: yMinVal, max: yMaxVal });
         }
       } else {
-        // Manually compute Y range from visible data for auto mode
         let yLo = Infinity, yHi = -Infinity;
         for (let i = 0; i < visN; i++) {
           if (visAmps[i] < yLo) yLo = visAmps[i];
@@ -542,8 +583,8 @@ export default function LiveChart() {
         u.setScale('y', { min: yLo - yMargin, max: yHi + yMargin });
       }
     });
+    programmaticScale.current = false;
 
-    // Update view stats
     let sum = 0, mn = Infinity, mx = -Infinity;
     for (let i = 0; i < visN; i++) {
       sum += visAmps[i]; mn = Math.min(mn, visAmps[i]); mx = Math.max(mx, visAmps[i]);
@@ -560,10 +601,10 @@ export default function LiveChart() {
     drawMinimap();
   }, [paused, timeWindowS, yAutoScale, yMin, yMax, setViewStats, drawMinimap]);
 
-  // ── Animation loop ────────────────────────────────────────────────────────
+  // ── Animation loop — only runs when on monitor view ───────────────────────
 
   useEffect(() => {
-    if (paused) return;
+    if (paused || currentView !== 'monitor') return;
 
     let frameId: number;
     let lastRender = 0;
@@ -580,12 +621,12 @@ export default function LiveChart() {
     frameId = requestAnimationFrame(tick);
 
     return () => cancelAnimationFrame(frameId);
-  }, [paused, renderFrame]);
+  }, [paused, renderFrame, currentView]);
 
-  // When paused, re-render whenever renderFrame changes (e.g. time window change)
+  // Render once when paused, when time window changes, or when switching back to monitor
   useEffect(() => {
-    if (paused) renderFrame();
-  }, [paused, renderFrame]);
+    if (paused || currentView === 'monitor') renderFrame();
+  }, [paused, renderFrame, currentView]);
 
   const confirmMarker = () => {
     if (!markerPopup) return;
@@ -604,7 +645,6 @@ export default function LiveChart() {
     <div className="panel flex-1 overflow-hidden flex flex-col">
       {/* Toolbar */}
       <div className="flex items-center gap-2 flex-shrink-0 mb-1">
-        {/* Live value */}
         <span className="font-mono font-bold text-xl text-accent-teal min-w-[100px]">
           {liveValue !== null ? formatCurrentShort(liveValue) : '—'}
         </span>
@@ -624,7 +664,6 @@ export default function LiveChart() {
             className={clsx('btn btn-sm btn-ghost px-2 text-xs', !yAutoScale && 'bg-surface text-text')}
             onClick={() => {
               setYAutoScale(false);
-              // Pre-fill from current view
               const st = useAppStore.getState().viewStats;
               if (st && !yMin && !yMax) {
                 const margin = (st.maxAmps - st.minAmps) * 0.1 || 1e-6;
@@ -674,7 +713,7 @@ export default function LiveChart() {
           ))}
         </div>
 
-        {/* Pause */}
+        {/* Pause / Resume */}
         <button
           className={clsx('btn btn-sm flex items-center gap-1', paused ? 'btn-primary' : 'btn-ghost')}
           onClick={async () => {
@@ -700,7 +739,7 @@ export default function LiveChart() {
         </button>
       </div>
 
-      {/* uPlot container — relative for popup positioning */}
+      {/* uPlot container */}
       <div
         className="flex-1 overflow-hidden rounded relative min-h-0"
         onMouseEnter={() => { isHoveringRef.current = true; }}
