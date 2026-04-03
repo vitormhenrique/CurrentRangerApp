@@ -47,6 +47,20 @@ function colorWithAlpha(color: string, alpha: number): string {
   return color;
 }
 
+/** Format a unix-seconds timestamp as local HH:MM:SS */
+function formatLocalTime(unixS: number): string {
+  const d = new Date(unixS * 1000);
+  return d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+}
+
+/** Format a unix-seconds timestamp as local HH:MM:SS.mmm */
+function formatLocalTimeMs(unixS: number): string {
+  const d = new Date(unixS * 1000);
+  const hms = d.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  const ms = String(d.getMilliseconds()).padStart(3, '0');
+  return `${hms}.${ms}`;
+}
+
 function formatYAxis(amps: number): string {
   const a = Math.abs(amps);
   if (a === 0) return '0';
@@ -110,6 +124,7 @@ export default function LiveChart() {
   const [markerNote,     setMarkerNote]     = useState('');
   const [markerCategory, setMarkerCategory] = useState<MarkerCategory>('note');
   const [markerColor,    setMarkerColor]    = useState('');
+  const [markerError,   setMarkerError]    = useState(false);
   const markerInputRef = useRef<HTMLInputElement>(null);
 
   // Sync markerPopupOpenRef with popup state
@@ -160,7 +175,7 @@ export default function LiveChart() {
           ticks: { stroke: GRID_COLOR, width: 0.5 },
           values: (_u, vals) =>
             vals.map((v) =>
-              v == null ? '' : new Date(v * 1000).toISOString().substr(11, 8),
+              v == null ? '' : formatLocalTime(v),
             ),
         },
         {
@@ -326,6 +341,8 @@ export default function LiveChart() {
       setMarkerLabel('');
       setMarkerNote('');
       setMarkerCategory('note');
+      setMarkerColor('');
+      setMarkerError(false);
       setTimeout(() => markerInputRef.current?.focus(), 50);
     };
     window.addEventListener('keydown', handleKeyDown);
@@ -652,25 +669,29 @@ export default function LiveChart() {
 
   const confirmMarker = () => {
     if (!markerPopup) return;
+    if (!markerLabel.trim()) {
+      setMarkerError(true);
+      markerInputRef.current?.focus();
+      return;
+    }
     if (markerPopup.editId) {
-      // Editing existing marker
       updateMarker(markerPopup.editId, {
-        label: markerLabel || MARKER_LABELS[markerCategory],
+        label: markerLabel.trim(),
         note: markerNote,
         category: markerCategory,
         color: markerColor || MARKER_COLORS[markerCategory],
       });
     } else {
-      // Adding new marker
       addMarker({
         timestamp: markerPopup.ts,
         endTimestamp: markerPopup.tsEnd,
-        label: markerLabel || MARKER_LABELS[markerCategory],
+        label: markerLabel.trim(),
         note: markerNote,
         category: markerCategory,
         color: markerColor || MARKER_COLORS[markerCategory],
       });
     }
+    setMarkerError(false);
     setMarkerPopup(null);
   };
 
@@ -757,6 +778,7 @@ export default function LiveChart() {
       setMarkerNote('');
       setMarkerCategory('note');
       setMarkerColor('');
+      setMarkerError(false);
       const t0 = u.posToVal(sel.left, 'x');
       const t1 = u.posToVal(sel.left + sel.width, 'x');
       setMarkerPopup({ x: popX, y: popY, ts: t0, tsEnd: t1 });
@@ -777,11 +799,11 @@ export default function LiveChart() {
     const hit = hitRange || hitPoint;
 
     if (hit) {
-      // Edit existing marker
       setMarkerLabel(hit.label);
       setMarkerNote(hit.note);
       setMarkerCategory(hit.category as MarkerCategory);
       setMarkerColor(hit.color);
+      setMarkerError(false);
       setMarkerPopup({ x: popX, y: popY, ts: hit.timestamp, tsEnd: hit.endTimestamp, editId: hit.id });
       setTimeout(() => markerInputRef.current?.focus(), 50);
       return;
@@ -792,6 +814,7 @@ export default function LiveChart() {
     setMarkerNote('');
     setMarkerCategory('note');
     setMarkerColor('');
+    setMarkerError(false);
     setMarkerPopup({ x: popX, y: popY, ts });
     setTimeout(() => markerInputRef.current?.focus(), 50);
   }, []);
@@ -953,23 +976,24 @@ export default function LiveChart() {
                   : <><MapPin size={11} className="text-accent-teal" /> Point marker</>
               }
               <span className="ml-auto opacity-60">
-                {new Date(markerPopup.ts * 1000).toISOString().substr(11, 12)}
-                {markerPopup.tsEnd != null && ` – ${new Date(markerPopup.tsEnd * 1000).toISOString().substr(11, 12)}`}
+                {formatLocalTimeMs(markerPopup.ts)}
+                {markerPopup.tsEnd != null && ` – ${formatLocalTimeMs(markerPopup.tsEnd)}`}
               </span>
             </div>
 
             {/* Label */}
             <input
               ref={markerInputRef}
-              className="input text-xs"
-              placeholder="Label (optional)…"
+              className={`input text-xs ${markerError ? 'ring-1 ring-accent-red' : ''}`}
+              placeholder="Label (required)"
               value={markerLabel}
-              onChange={(e) => setMarkerLabel(e.target.value)}
+              onChange={(e) => { setMarkerLabel(e.target.value); if (e.target.value.trim()) setMarkerError(false); }}
               onKeyDown={(e) => {
                 if (e.key === 'Enter') confirmMarker();
-                if (e.key === 'Escape') setMarkerPopup(null);
+                if (e.key === 'Escape') { setMarkerError(false); setMarkerPopup(null); }
               }}
             />
+            {markerError && <span className="text-[10px] text-accent-red -mt-1">Label is required</span>}
 
             {/* Note */}
             <textarea
