@@ -15,6 +15,14 @@ nav_order: 2
 
 Download the latest release from the [Releases page](https://github.com/vitormhenrique/CurrentRangerApp/releases).
 
+### macOS
+
+The app is not yet signed with an Apple Developer certificate. After copying to Applications, remove the quarantine flag:
+```bash
+xattr -cr /Applications/CurrentRanger.app
+```
+If macOS still shows a warning, right-click the app and select **Open**, then click **Open** in the dialog.
+
 ## First Launch
 
 1. Connect your CurrentRanger R3 via USB

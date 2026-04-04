@@ -49,7 +49,11 @@ Download the latest release for your platform from the [Releases page](https://g
 
 1. Open the `.dmg` file
 2. Drag **CurrentRanger** into your Applications folder
-3. On first launch, macOS may show a Gatekeeper warning — right-click the app and select **Open**, then click **Open** in the dialog
+3. The app is not yet signed with an Apple Developer certificate, so macOS will block it. After copying to Applications, run:
+```bash
+xattr -cr /Applications/CurrentRanger.app
+```
+4. Launch the app normally. If macOS still shows a warning, right-click the app and select **Open**, then click **Open** in the dialog
 
 ### Windows
 

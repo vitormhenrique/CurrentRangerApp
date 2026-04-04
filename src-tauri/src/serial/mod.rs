@@ -297,7 +297,7 @@ impl SerialManager {
                 }
             };
 
-        let port = match open_result {
+        let port: Box<dyn serialport::SerialPort> = match open_result {
             Ok(mut p) => {
                 log::info!("SerialManager::connect: port opened successfully");
                 // On real serial ports (not PTY), de-assert DTR to prevent the
