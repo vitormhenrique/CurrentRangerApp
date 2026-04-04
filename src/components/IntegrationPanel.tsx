@@ -4,6 +4,9 @@ import { useState } from 'react';
 import { useAppStore, getOrderedSlice } from '../store';
 import { api } from '../api/tauri';
 import { formatCurrent, formatDuration } from '../types';
+import { logger } from '../lib/logger';
+
+const SRC = 'Integration';
 
 export default function IntegrationPanel() {
   const { settings, setSettings, integrationResult, setIntegrationResult, totalSamples, selectionRange } =
@@ -14,6 +17,7 @@ export default function IntegrationPanel() {
   const run = async () => {
     setLoading(true);
     setError('');
+    logger.info(SRC, `Computing integration: voltage=${settings.voltageV}V, source=${selectionRange ? 'selection' : 'all samples'}`);
     try {
       let timestamps: number[];
       let amps: number[];

@@ -19,7 +19,13 @@ use tauri::{AppHandle, State};
 
 #[tauri::command]
 pub async fn list_ports() -> Vec<PortInfo> {
-    serial::list_serial_ports()
+    log::debug!("list_ports: enumerating serial ports");
+    let ports = serial::list_serial_ports();
+    log::info!("list_ports: found {} port(s)", ports.len());
+    for p in &ports {
+        log::debug!("  port: {} desc={:?} vid={:?} pid={:?}", p.name, p.description, p.vid, p.pid);
+    }
+    ports
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -34,15 +40,23 @@ pub async fn connect_device(
     app: AppHandle,
 ) -> Result<(), String> {
     let baud = baud.unwrap_or(serial::DEFAULT_BAUD);
+    log::info!("connect_device: port={}, baud={}", port, baud);
     let store_arc = state.store.clone();
     let mut mgr = state.serial.lock().await;
-    mgr.connect(port, baud, app, store_arc).await
+    let result = mgr.connect(port.clone(), baud, app, store_arc).await;
+    match &result {
+        Ok(()) => log::info!("connect_device: connected to {} successfully", port),
+        Err(e) => log::error!("connect_device: failed to connect to {}: {}", port, e),
+    }
+    result
 }
 
 #[tauri::command]
 pub async fn disconnect_device(state: State<'_, AppState>, app: AppHandle) -> Result<(), String> {
+    log::info!("disconnect_device: disconnecting");
     let mut mgr = state.serial.lock().await;
     mgr.disconnect_and_emit(&app).await;
+    log::info!("disconnect_device: done");
     Ok(())
 }
 
@@ -62,6 +76,7 @@ pub async fn send_device_command(
     request: DeviceCommandRequest,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    log::debug!("send_device_command: {:?}", request.command);
     let ch = request
         .command
         .chars()
@@ -90,6 +105,7 @@ pub struct SampleBatchResponse {
 #[tauri::command]
 pub async fn get_samples(state: State<'_, AppState>) -> Result<SampleBatchResponse, String> {
     let store = state.store.lock().unwrap();
+    log::debug!("get_samples: returning {} samples", store.total_pushed);
     Ok(SampleBatchResponse {
         timestamps: store.timestamps.clone(),
         amps: store.amps.clone(),
@@ -104,6 +120,7 @@ pub async fn get_stats(
     state: State<'_, AppState>,
 ) -> Result<SampleStats, String> {
     let store = state.store.lock().unwrap();
+    log::debug!("get_stats: t_start={:?}, t_end={:?}", t_start, t_end);
     Ok(match (t_start, t_end) {
         (Some(t0), Some(t1)) => store.stats_window(t0, t1),
         _ => store.stats(),
@@ -112,6 +129,7 @@ pub async fn get_stats(
 
 #[tauri::command]
 pub async fn clear_samples(state: State<'_, AppState>) -> Result<(), String> {
+    log::info!("clear_samples: clearing all stored samples");
     let mut store = state.store.lock().unwrap();
     store.clear();
     Ok(())
@@ -134,6 +152,7 @@ pub async fn save_workspace(
     request: SaveWorkspaceRequest,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    log::info!("save_workspace: path={}, markers={}", request.path, request.markers.len());
     // Lock store briefly (std Mutex — don't hold across await)
     let (samples, stats) = {
         let store = state.store.lock().unwrap();
@@ -146,6 +165,7 @@ pub async fn save_workspace(
         let stats = store.stats();
         (samples, stats)
     };
+    log::debug!("save_workspace: {} samples to save", samples.len());
     let mgr = state.serial.lock().await;
 
     let ws = Workspace {
@@ -179,12 +199,14 @@ pub async fn load_workspace(
     path: String,
     state: State<'_, AppState>,
 ) -> Result<LoadWorkspaceResponse, String> {
+    log::info!("load_workspace: path={}", path);
     let p = PathBuf::from(&path);
     let ws = crate::workspace::load_workspace(&p).map_err(|e| e.to_string())?;
 
     let timestamps: Vec<f64> = ws.session.samples.iter().map(|s| s.t).collect();
     let amps: Vec<f64> = ws.session.samples.iter().map(|s| s.a).collect();
     let sample_count = timestamps.len();
+    log::info!("load_workspace: loaded {} samples, {} markers", sample_count, ws.session.markers.len());
 
     // Load samples into store
     {
@@ -217,6 +239,7 @@ pub async fn export_csv(
     voltage_v: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    log::info!("export_csv: path={}, voltage={:?}", path, voltage_v);
     let store = state.store.lock().unwrap();
     let samples: Vec<crate::workspace::SampleRecord> = store
         .timestamps
@@ -234,6 +257,7 @@ pub async fn export_json(
     voltage_v: Option<f64>,
     state: State<'_, AppState>,
 ) -> Result<(), String> {
+    log::info!("export_json: path={}, voltage={:?}", path, voltage_v);
     let store = state.store.lock().unwrap();
     let samples: Vec<crate::workspace::SampleRecord> = store
         .timestamps
@@ -252,6 +276,7 @@ pub async fn export_json(
 
 #[tauri::command]
 pub async fn compute_integration(input: IntegrationInput) -> IntegrationResult {
+    log::debug!("compute_integration: {} samples, voltage={}", input.timestamps.len(), input.voltage);
     crate::metrics::integrate(&input)
 }
 
@@ -259,6 +284,7 @@ pub async fn compute_integration(input: IntegrationInput) -> IntegrationResult {
 pub async fn compute_battery_runtime(
     input: BatteryRuntimeInput,
 ) -> Result<BatteryRuntimeResult, String> {
+    log::debug!("compute_battery_runtime: capacity={}mAh, current={}A", input.capacity_mah, input.avg_current_amps);
     crate::metrics::estimate_runtime(&input)
 }
 
@@ -266,5 +292,6 @@ pub async fn compute_battery_runtime(
 pub async fn compute_required_capacity(
     input: RequiredCapacityInput,
 ) -> Result<RequiredCapacityResult, String> {
+    log::debug!("compute_required_capacity: runtime={}h, current={}A", input.desired_runtime_hours, input.avg_current_amps);
     crate::metrics::estimate_required_capacity(&input)
 }

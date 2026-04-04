@@ -3,6 +3,7 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
 import { open, save } from '@tauri-apps/plugin-dialog';
+import { logger } from '../lib/logger';
 import {
   AppSettings,
   BatteryRuntimeResult,
@@ -16,91 +17,149 @@ import {
   SampleStats,
 } from '../types';
 
+const SRC = 'api';
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Commands
 // ─────────────────────────────────────────────────────────────────────────────
 
 export const api = {
-  listPorts(): Promise<PortInfo[]> {
-    return invoke('list_ports');
+  async listPorts(): Promise<PortInfo[]> {
+    logger.debug(SRC, 'listPorts() called');
+    const ports = await invoke<PortInfo[]>('list_ports');
+    logger.info(SRC, `listPorts() → ${ports.length} ports: ${ports.map((p) => p.name).join(', ')}`);
+    return ports;
   },
 
-  connectDevice(port: string, baud?: number): Promise<void> {
-    return invoke('connect_device', { port, baud });
+  async connectDevice(port: string, baud?: number): Promise<void> {
+    logger.info(SRC, `connectDevice(port=${port}, baud=${baud ?? 'default'})`);
+    try {
+      await invoke('connect_device', { port, baud });
+      logger.info(SRC, `connectDevice() → success`);
+    } catch (e) {
+      logger.error(SRC, `connectDevice() → error: ${e}`);
+      throw e;
+    }
   },
 
-  disconnectDevice(): Promise<void> {
-    return invoke('disconnect_device');
+  async disconnectDevice(): Promise<void> {
+    logger.info(SRC, 'disconnectDevice() called');
+    try {
+      await invoke('disconnect_device');
+      logger.info(SRC, 'disconnectDevice() → success');
+    } catch (e) {
+      logger.error(SRC, `disconnectDevice() → error: ${e}`);
+      throw e;
+    }
   },
 
-  sendDeviceCommand(command: string): Promise<void> {
-    return invoke('send_device_command', { request: { command } });
+  async sendDeviceCommand(command: string): Promise<void> {
+    logger.debug(SRC, `sendDeviceCommand(${JSON.stringify(command)})`);
+    try {
+      await invoke('send_device_command', { request: { command } });
+      logger.debug(SRC, `sendDeviceCommand(${JSON.stringify(command)}) → success`);
+    } catch (e) {
+      logger.error(SRC, `sendDeviceCommand(${JSON.stringify(command)}) → error: ${e}`);
+      throw e;
+    }
   },
 
-  getSamples(): Promise<{ timestamps: number[]; amps: number[]; total: number }> {
-    return invoke('get_samples');
+  async getSamples(): Promise<{ timestamps: number[]; amps: number[]; total: number }> {
+    logger.debug(SRC, 'getSamples() called');
+    const result = await invoke<{ timestamps: number[]; amps: number[]; total: number }>('get_samples');
+    logger.debug(SRC, `getSamples() → ${result.total} total samples`);
+    return result;
   },
 
-  getStats(tStart?: number, tEnd?: number): Promise<SampleStats> {
-    return invoke('get_stats', { tStart, tEnd });
+  async getStats(tStart?: number, tEnd?: number): Promise<SampleStats> {
+    logger.debug(SRC, `getStats(tStart=${tStart}, tEnd=${tEnd})`);
+    const stats = await invoke<SampleStats>('get_stats', { tStart, tEnd });
+    logger.debug(SRC, `getStats() → count=${stats.count}, avg=${stats.avgAmps}`);
+    return stats;
   },
 
-  clearSamples(): Promise<void> {
-    return invoke('clear_samples');
+  async clearSamples(): Promise<void> {
+    logger.info(SRC, 'clearSamples() called');
+    await invoke('clear_samples');
+    logger.info(SRC, 'clearSamples() → done');
   },
 
-  saveWorkspace(
+  async saveWorkspace(
     path: string,
     appSettings: AppSettings,
     markers: Marker[],
   ): Promise<void> {
-    return invoke('save_workspace', { request: { path, appSettings, markers } });
+    logger.info(SRC, `saveWorkspace(path=${path}, markers=${markers.length})`);
+    await invoke('save_workspace', { request: { path, appSettings, markers } });
+    logger.info(SRC, 'saveWorkspace() → done');
   },
 
-  loadWorkspace(path: string): Promise<{
+  async loadWorkspace(path: string): Promise<{
     appSettings: AppSettings;
     markers: Marker[];
     sampleCount: number;
     timestamps: number[];
     amps: number[];
   }> {
-    return invoke('load_workspace', { path });
+    logger.info(SRC, `loadWorkspace(path=${path})`);
+    const result = await invoke<{
+      appSettings: AppSettings;
+      markers: Marker[];
+      sampleCount: number;
+      timestamps: number[];
+      amps: number[];
+    }>('load_workspace', { path });
+    logger.info(SRC, `loadWorkspace() → ${result.sampleCount} samples, ${result.markers.length} markers`);
+    return result;
   },
 
-  exportCsv(path: string, voltageV?: number): Promise<void> {
-    return invoke('export_csv', { path, voltageV });
+  async exportCsv(path: string, voltageV?: number): Promise<void> {
+    logger.info(SRC, `exportCsv(path=${path}, voltage=${voltageV})`);
+    await invoke('export_csv', { path, voltageV });
+    logger.info(SRC, 'exportCsv() → done');
   },
 
-  exportJson(path: string, voltageV?: number): Promise<void> {
-    return invoke('export_json', { path, voltageV });
+  async exportJson(path: string, voltageV?: number): Promise<void> {
+    logger.info(SRC, `exportJson(path=${path}, voltage=${voltageV})`);
+    await invoke('export_json', { path, voltageV });
+    logger.info(SRC, 'exportJson() → done');
   },
 
-  computeIntegration(input: {
+  async computeIntegration(input: {
     timestamps: number[];
     amps: number[];
     voltage: number;
   }): Promise<IntegrationResult> {
-    return invoke('compute_integration', { input });
+    logger.debug(SRC, `computeIntegration(samples=${input.timestamps.length}, voltage=${input.voltage})`);
+    const result = await invoke<IntegrationResult>('compute_integration', { input });
+    logger.debug(SRC, `computeIntegration() → charge=${result.chargeMah}mAh`);
+    return result;
   },
 
-  computeBatteryRuntime(input: {
+  async computeBatteryRuntime(input: {
     capacityMah: number;
     avgCurrentAmps: number;
     efficiency: number;
     depthOfDischarge: number;
     agingMargin: number;
   }): Promise<BatteryRuntimeResult> {
-    return invoke('compute_battery_runtime', { input });
+    logger.debug(SRC, `computeBatteryRuntime(capacity=${input.capacityMah}mAh, current=${input.avgCurrentAmps}A)`);
+    const result = await invoke<BatteryRuntimeResult>('compute_battery_runtime', { input });
+    logger.debug(SRC, `computeBatteryRuntime() → ${result.runtimeHours}h`);
+    return result;
   },
 
-  computeRequiredCapacity(input: {
+  async computeRequiredCapacity(input: {
     desiredRuntimeHours: number;
     avgCurrentAmps: number;
     efficiency: number;
     depthOfDischarge: number;
     agingMargin: number;
   }): Promise<RequiredCapacityResult> {
-    return invoke('compute_required_capacity', { input });
+    logger.debug(SRC, `computeRequiredCapacity(runtime=${input.desiredRuntimeHours}h, current=${input.avgCurrentAmps}A)`);
+    const result = await invoke<RequiredCapacityResult>('compute_required_capacity', { input });
+    logger.debug(SRC, `computeRequiredCapacity() → ${result.requiredCapacityMah}mAh`);
+    return result;
   },
 };
 

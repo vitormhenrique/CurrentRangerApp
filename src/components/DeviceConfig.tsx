@@ -3,7 +3,10 @@
 import { useState } from 'react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from '../store';
 import { api } from '../api/tauri';
+import { logger } from '../lib/logger';
 import clsx from 'clsx';
+
+const SRC = 'DeviceConfig';
 
 // ─── helpers ──────────────────────────────────────────────────────────────────
 
@@ -81,9 +84,11 @@ export default function DeviceConfig() {
 
   const send = async (cmd: string) => {
     if (!isConnected) return;
+    logger.debug(SRC, `Sending command: ${JSON.stringify(cmd)}`);
     try {
       await api.sendDeviceCommand(cmd);
     } catch (e) {
+      logger.error(SRC, `Command ${JSON.stringify(cmd)} failed: ${e}`);
       appendStatusLog(`Error: ${e}`);
     }
   };
@@ -92,6 +97,7 @@ export default function DeviceConfig() {
   const sendRange = async (cmd: '1' | '2' | '3') => {
     if (!isConnected) return;
     const rangeMap = { '1': 'MA', '2': 'UA', '3': 'NA' } as const;
+    logger.info(SRC, `Force range: cmd=${cmd} → ${rangeMap[cmd]} (optimistic)`);
     try {
       await api.sendDeviceCommand(cmd);
       setConnectionStatus({
@@ -110,6 +116,8 @@ export default function DeviceConfig() {
   // Send command + optimistically toggle a device status boolean
   const sendToggle = async (cmd: string, key: keyof typeof deviceStatus) => {
     if (!isConnected) return;
+    const current = deviceStatus[key];
+    logger.info(SRC, `Toggle ${key}: cmd=${cmd}, current=${String(current)} → ${!(current ?? false)} (optimistic)`);
     try {
       await api.sendDeviceCommand(cmd);
       // Optimistic update for toggles that don't emit serial feedback
@@ -126,6 +134,7 @@ export default function DeviceConfig() {
   };
 
   const sendCalib = async (cmd: string, label: string) => {
+    logger.info(SRC, `Calibration: ${label} (cmd=${cmd})`);
     setCalibBusy(true);
     try {
       await send(cmd);
@@ -137,10 +146,12 @@ export default function DeviceConfig() {
 
   const handleReset = async () => {
     if (!confirmReset) {
+      logger.info(SRC, 'Reset requested — waiting for confirmation');
       setConfirmReset(true);
       setTimeout(() => setConfirmReset(false), 4000);
       return;
     }
+    logger.warn(SRC, 'Reset confirmed — sending reset command');
     await send('!');
     setConfirmReset(false);
   };

@@ -1,7 +1,7 @@
 // src/App.tsx — Root component with layout and event wiring
 
 import { useEffect, type ReactNode } from 'react';
-import { LineChart, Settings } from 'lucide-react';
+import { LineChart, Settings, Bug } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
 import {
   api,
@@ -12,6 +12,7 @@ import {
   onSerialInfo,
   onSerialError,
 } from './api/tauri';
+import { logger } from './lib/logger';
 import clsx from 'clsx';
 
 import DevicePanel from './components/DevicePanel';
@@ -23,6 +24,9 @@ import BatteryTools from './components/BatteryTools';
 import WorkspacePanel from './components/WorkspacePanel';
 import IntegrationPanel from './components/IntegrationPanel';
 import StatusBar from './components/StatusBar';
+import DebugConsole from './components/DebugConsole';
+
+const IS_DEV = import.meta.env.DEV;
 
 // Score ports — higher = better match for CurrentRanger
 function pickBestPort(ports: { name: string; description?: string; vid?: number }[]) {
@@ -59,22 +63,35 @@ export default function App() {
   // Wire up Tauri event listeners on mount
   useEffect(() => {
     const unlisteners: (() => void)[] = [];
+    logger.info('app', 'App mounted, wiring event listeners');
 
     (async () => {
       const ports = await api.listPorts();
       setPorts(ports);
+      logger.info('app', `Port discovery: found ${ports.length} ports`);
+      ports.forEach((p) =>
+        logger.debug('app', `  Port: ${p.name} desc="${p.description}" vid=${p.vid ?? 'N/A'} pid=${p.pid ?? 'N/A'}`),
+      );
       const firstPort = pickBestPort(ports);
       if (firstPort) {
+        logger.info('app', `Auto-selected port: ${firstPort.name} (best match)`);
         useAppStore.getState().setSelectedPort(firstPort.name);
       } else if (ports[0]) {
+        logger.info('app', `Auto-selected port: ${ports[0].name} (first available, no match)`);
         useAppStore.getState().setSelectedPort(ports[0].name);
+      } else {
+        logger.warn('app', 'No serial ports found');
       }
 
       unlisteners.push(
-        await onSerialSampleBatch((batch) => pushSampleBatch(batch.timestamps, batch.amps)),
+        await onSerialSampleBatch((batch) => {
+          pushSampleBatch(batch.timestamps, batch.amps);
+        }),
         await onSerialStatus((status) => {
           const prev = useAppStore.getState().connectionStatus.state;
+          logger.info('serial', `Status: ${prev} → ${status.state}${status.port ? ` (${status.port})` : ''}${status.error ? ` error: ${status.error}` : ''}`);
           if (status.state === 'Connected' && prev !== 'Connected') {
+            logger.info('serial', 'New connection established — marking acquisition, resuming chart');
             useAppStore.getState().markNewAcquisition();
             useAppStore.getState().setPaused(false);
             useAppStore.getState().setSelectionRange(null);
@@ -84,8 +101,10 @@ export default function App() {
         }),
         await onSerialDeviceStatus((ds) => {
           const prev = useAppStore.getState().connectionStatus.deviceStatus;
+          logger.debug('serial', `DeviceStatus update: ${JSON.stringify(ds)}`);
           // USB logging just turned on → insert a gap so chart lines break
           if (ds.usbLogging === true && prev.usbLogging !== true) {
+            logger.info('serial', 'USB logging enabled — inserting acquisition gap');
             useAppStore.getState().markNewAcquisition();
           }
           setConnectionStatus({
@@ -93,9 +112,16 @@ export default function App() {
             deviceStatus: ds,
           });
         }),
-        await onSerialStatusMessage((msg) => appendStatusLog(msg)),
-        await onSerialInfo((msg) => appendStatusLog(msg)),
+        await onSerialStatusMessage((msg) => {
+          logger.debug('serial', `StatusMessage: ${msg}`);
+          appendStatusLog(msg);
+        }),
+        await onSerialInfo((msg) => {
+          logger.debug('serial', `Info: ${msg}`);
+          appendStatusLog(msg);
+        }),
         await onSerialError((err) => {
+          logger.error('serial', `Error event: ${err}`);
           appendStatusLog(`⚠ Serial error: ${err}`);
           setConnectionStatus({
             ...useAppStore.getState().connectionStatus,
@@ -104,9 +130,13 @@ export default function App() {
           });
         }),
       );
+      logger.info('app', 'All event listeners wired');
     })();
 
-    return () => unlisteners.forEach((fn) => fn());
+    return () => {
+      logger.info('app', 'App unmounting, cleaning up event listeners');
+      unlisteners.forEach((fn) => fn());
+    };
   }, []);
 
   const stateColor =
@@ -123,7 +153,7 @@ export default function App() {
     label,
     icon,
   }: {
-    view: 'monitor' | 'device-config';
+    view: 'monitor' | 'device-config' | 'debug';
     label: string;
     icon: ReactNode;
   }) => (
@@ -159,6 +189,9 @@ export default function App() {
         <nav className="flex items-center gap-1">
           <NavTab view="monitor" label="Monitor" icon={<LineChart size={14} />} />
           <NavTab view="device-config" label="Device Config" icon={<Settings size={14} />} />
+          {IS_DEV && (
+            <NavTab view="debug" label="Debug" icon={<Bug size={14} />} />
+          )}
         </nav>
 
         <div className="flex-1" />
@@ -234,6 +267,11 @@ export default function App() {
       <div className={clsx('flex-1 overflow-hidden', currentView !== 'device-config' && 'hidden')}>
         <DeviceConfig />
       </div>
+      {IS_DEV && (
+        <div className={clsx('flex-1 overflow-hidden', currentView !== 'debug' && 'hidden')}>
+          <DebugConsole />
+        </div>
+      )}
 
       {/* Status bar */}
       <StatusBar />

@@ -23,6 +23,13 @@ pub struct AppState {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Initialize logging — RUST_LOG env var controls level (defaults to info)
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info"))
+        .format_timestamp_millis()
+        .init();
+
+    log::info!("CurrentRanger app starting");
+
     let state = AppState {
         serial: Arc::new(TokioMutex::new(serial::SerialManager::new())),
         store: Arc::new(std::sync::Mutex::new(SampleStore::new())),

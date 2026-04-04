@@ -5,6 +5,9 @@ import { Save, FolderOpen, Download, Trash2 } from 'lucide-react';
 import { ask } from '@tauri-apps/plugin-dialog';
 import { useAppStore } from '../store';
 import { api, pickSaveCsv, pickSaveJson, pickSaveWorkspace, pickOpenWorkspace } from '../api/tauri';
+import { logger } from '../lib/logger';
+
+const SRC = 'Workspace';
 
 export default function WorkspacePanel() {
   const { settings, markers, appendStatusLog, loadSamplesFromBackend, setMarkers, setSettings } =
@@ -26,6 +29,7 @@ export default function WorkspacePanel() {
     run(async () => {
       const path = await pickSaveWorkspace();
       if (!path) return;
+      logger.info(SRC, `Saving workspace to ${path}`);
       await api.saveWorkspace(path, settings, markers);
       appendStatusLog(`Workspace saved: ${path}`);
     });
@@ -34,10 +38,12 @@ export default function WorkspacePanel() {
     run(async () => {
       const path = await pickOpenWorkspace();
       if (!path) return;
+      logger.info(SRC, `Loading workspace from ${path}`);
       const result = await api.loadWorkspace(path);
       loadSamplesFromBackend(result.timestamps, result.amps);
       setMarkers(result.markers);
       setSettings(result.appSettings);
+      logger.info(SRC, `Workspace loaded: ${result.sampleCount} samples, ${result.markers.length} markers`);
       appendStatusLog(`Workspace loaded: ${path} (${result.sampleCount} samples)`);
     });
 
@@ -45,6 +51,7 @@ export default function WorkspacePanel() {
     run(async () => {
       const path = await pickSaveCsv();
       if (!path) return;
+      logger.info(SRC, `Exporting CSV to ${path}`);
       await api.exportCsv(path, settings.voltageV);
       appendStatusLog(`CSV exported: ${path}`);
     });
@@ -53,6 +60,7 @@ export default function WorkspacePanel() {
     run(async () => {
       const path = await pickSaveJson();
       if (!path) return;
+      logger.info(SRC, `Exporting JSON to ${path}`);
       await api.exportJson(path, settings.voltageV);
       appendStatusLog(`JSON exported: ${path}`);
     });

@@ -45,6 +45,7 @@ pub struct PortInfo {
 const MOCK_PORT_FILE: &str = "/tmp/cr-mock.port";
 
 pub fn list_serial_ports() -> Vec<PortInfo> {
+    log::debug!("list_serial_ports: enumerating OS serial ports");
     let mut ports: Vec<PortInfo> = serialport::available_ports()
         .unwrap_or_default()
         .into_iter()
@@ -72,6 +73,7 @@ pub fn list_serial_ports() -> Vec<PortInfo> {
         if !path.is_empty() && std::path::Path::new(&path).exists() {
             // Only add if not already present (avoids duplicates on real ports).
             if !ports.iter().any(|p| p.name == path) {
+                log::info!("Mock device detected at {}", path);
                 ports.insert(0, PortInfo {
                     name: path,
                     description: "CurrentRanger Mock".to_string(),
@@ -224,7 +226,9 @@ impl SerialManager {
         app: AppHandle,
         store: Arc<std::sync::Mutex<SampleStore>>,
     ) -> Result<(), String> {
+        log::info!("SerialManager::connect: port={}, baud={}", port_name, baud);
         if self.status.state == ConnectionState::Connected {
+            log::info!("SerialManager::connect: already connected, disconnecting first");
             self.disconnect().await;
         }
 
@@ -232,17 +236,24 @@ impl SerialManager {
         self.status.port = Some(port_name.clone());
         self.status.baud = Some(baud);
         self.status.error = None;
+        log::debug!("SerialManager::connect: state → Connecting");
         self.emit_status(&app);
 
         // On macOS, prefer /dev/cu.* over /dev/tty.* to avoid blocking on DCD.
         // PTY slave paths (/dev/ttysN on macOS, /dev/pts/N on Linux) must NOT be
         // rewritten — they are not dot-separated and have no /dev/cu.* equivalent.
+        let is_pty = is_pty_slave_path(&port_name);
         let port_name_adjusted = if cfg!(target_os = "macos")
             && port_name.contains("/dev/tty.")
-            && !is_pty_slave_path(&port_name)
+            && !is_pty
         {
-            port_name.replace("/dev/tty.", "/dev/cu.")
+            let adjusted = port_name.replace("/dev/tty.", "/dev/cu.");
+            log::info!("SerialManager::connect: macOS path rewrite {} → {}", port_name, adjusted);
+            adjusted
         } else {
+            if is_pty {
+                log::info!("SerialManager::connect: PTY slave path detected: {}", port_name);
+            }
             port_name.clone()
         };
 
@@ -253,8 +264,10 @@ impl SerialManager {
         // which skips all IOKit ioctls and uses only standard POSIX termios.
         let open_result: Result<Box<dyn serialport::SerialPort>, String> =
             if is_pty_slave_path(&port_name_adjusted) {
+                log::debug!("SerialManager::connect: opening PTY slave via raw fd");
                 open_pty_slave(&port_name_adjusted)
             } else {
+                log::debug!("SerialManager::connect: opening serial port via serialport crate");
                 let port_name_clone = port_name_adjusted.clone();
                 let r = tokio::task::spawn_blocking(move || {
                     serialport::new(&port_name_clone, baud)
@@ -274,8 +287,12 @@ impl SerialManager {
             };
 
         let port = match open_result {
-            Ok(p) => p,
+            Ok(p) => {
+                log::info!("SerialManager::connect: port opened successfully");
+                p
+            }
             Err(msg) => {
+                log::error!("SerialManager::connect: failed to open port: {}", msg);
                 self.status.state = ConnectionState::Error;
                 self.status.error = Some(msg.clone());
                 self.emit_status(&app);
@@ -289,6 +306,7 @@ impl SerialManager {
         self.cmd_tx = Some(cmd_tx);
         self.format_tx = Some(format_tx);
         self.status.state = ConnectionState::Connected;
+        log::info!("SerialManager::connect: state → Connected, spawning reader thread");
         self.emit_status(&app);
 
         // Spawn a dedicated OS thread for serial I/O (blocking reads must not
@@ -305,10 +323,13 @@ impl SerialManager {
 
     /// Disconnect gracefully.
     pub async fn disconnect(&mut self) {
+        log::info!("SerialManager::disconnect: starting graceful disconnect");
         if let Some(tx) = self.cmd_tx.take() {
+            log::debug!("SerialManager::disconnect: sending Stop to reader thread");
             let _ = tx.send(ReaderCommand::Stop);
         }
         if let Some(h) = self.reader_handle.take() {
+            log::debug!("SerialManager::disconnect: joining reader thread (2s timeout)");
             // Join the OS thread; use spawn_blocking so we don't block tokio
             let _ = tokio::time::timeout(
                 Duration::from_secs(2),
@@ -317,6 +338,7 @@ impl SerialManager {
                 }),
             )
             .await;
+            log::debug!("SerialManager::disconnect: reader thread joined");
         }
         self.format_tx.take();
         self.status.state = ConnectionState::Disconnected;
@@ -325,6 +347,7 @@ impl SerialManager {
         self.status.error = None;
         // Reset device status so reconnect starts clean — the bootstrap will re-query
         self.status.device_status = DeviceStatus::default();
+        log::info!("SerialManager::disconnect: state → Disconnected, device status reset");
     }
 
     /// Disconnect and emit status to the frontend.
@@ -386,13 +409,17 @@ fn reader_thread(
     let mut batch_amps: Vec<f64> = Vec::with_capacity(128);
     let mut last_emit = Instant::now();
 
+    log::info!("Reader thread started, beginning USB logging bootstrap");
+
     // ─────────────────────────────────────────────────────────────────────
     // USB Logging Bootstrap
     // ─────────────────────────────────────────────────────────────────────
 
     std::thread::sleep(Duration::from_millis(200));
+    log::debug!("Bootstrap: clearing input buffer");
     let _ = port.clear(serialport::ClearBuffer::Input);
 
+    log::debug!("Bootstrap: sending 'U' (USB logging query)");
     if let Err(e) = port.write_all(b"U") {
         log::warn!("Failed to send USB logging query: {}", e);
     }
@@ -414,9 +441,10 @@ fn reader_thread(
 
     let usb_logging_on = response.contains("USB_LOGGING_ENABLED");
     let usb_logging_off = response.contains("USB_LOGGING_DISABLED");
+    log::debug!("Bootstrap: usb_on={}, usb_off={}", usb_logging_on, usb_logging_off);
 
     if usb_logging_off || !usb_logging_on {
-        log::info!("USB logging is OFF, enabling...");
+        log::info!("USB logging is OFF, enabling (sending 'u')...");
         if let Err(e) = port.write_all(b"u") {
             log::warn!("Failed to enable USB logging: {}", e);
         }
@@ -427,6 +455,7 @@ fn reader_thread(
     }
 
     let _ = port.clear(serialport::ClearBuffer::Input);
+    log::info!("Bootstrap complete, entering main read loop");
 
     // ─────────────────────────────────────────────────────────────────────
     // Main read loop
@@ -483,14 +512,17 @@ fn reader_thread(
                             batch_amps.push(sample.amps);
                         }
                         ParsedLine::StatusUpdate { update } => {
+                            log::info!("Status update: {:?}", update);
                             apply_status_update(&mut device_status, update);
                             let _ = app.emit("serial:device_status", &device_status);
                             let _ = app.emit("serial:status_message", &line);
                         }
                         ParsedLine::Info { message } => {
+                            log::debug!("Info line: {}", message);
                             let _ = app.emit("serial:info", message);
                         }
                         ParsedLine::Unknown { raw } if !raw.is_empty() => {
+                            log::debug!("Unknown serial line: {:?}", raw);
                             let _ = app.emit("serial:unknown", raw);
                         }
                         _ => {}

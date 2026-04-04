@@ -4,8 +4,10 @@ import { useState } from 'react';
 import { RefreshCw } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from '../store';
 import { api } from '../api/tauri';
+import { logger } from '../lib/logger';
 import clsx from 'clsx';
 
+const SRC = 'DevicePanel';
 const BAUD_OPTIONS = [230400, 115200, 57600, 9600];
 
 function pickBestPort(ports: { name: string; description?: string; vid?: number }[]) {
@@ -45,11 +47,15 @@ export default function DevicePanel() {
   const [isBusy, setIsBusy] = useState(false);
 
   const refreshPorts = async () => {
+    logger.debug(SRC, 'Refreshing port list');
     const ps = await api.listPorts();
     setPorts(ps);
     if (!isConnected) {
       const match = pickBestPort(ps);
-      if (match) setSelectedPort(match.name);
+      if (match) {
+        logger.info(SRC, `Best port match after refresh: ${match.name}`);
+        setSelectedPort(match.name);
+      }
     }
   };
 
@@ -57,17 +63,21 @@ export default function DevicePanel() {
     setIsBusy(true);
     try {
       if (isConnected) {
+        logger.info(SRC, 'User initiated disconnect');
         await api.disconnectDevice();
         appendStatusLog('Disconnected');
       } else {
+        logger.info(SRC, `User initiated connect: port=${selectedPort}, baud=${baud}`);
         await api.connectDevice(selectedPort, baud);
         appendStatusLog(`Connected to ${selectedPort}`);
         // Query device config after connection settles
         setTimeout(async () => {
+          logger.debug(SRC, 'Querying device config (delayed ? command)');
           try { await api.sendDeviceCommand('?'); } catch { /* ignore */ }
         }, 800);
       }
     } catch (e: unknown) {
+      logger.error(SRC, `Connection toggle failed: ${e}`);
       appendStatusLog(`Error: ${e}`);
     } finally {
       setIsBusy(false);
@@ -75,6 +85,7 @@ export default function DevicePanel() {
   };
 
   const send = async (cmd: string) => {
+    logger.debug(SRC, `Sending command: ${JSON.stringify(cmd)}`);
     try { await api.sendDeviceCommand(cmd); } catch { /* ignore */ }
   };
 
@@ -83,6 +94,7 @@ export default function DevicePanel() {
   // sends no USB confirmation, so we update the store directly.
   const sendRange = async (cmd: '1' | '2' | '3') => {
     const rangeMap = { '1': 'MA', '2': 'UA', '3': 'NA' } as const;
+    logger.info(SRC, `Force range: cmd=${cmd} → ${rangeMap[cmd]} (optimistic)`);
     try {
       await api.sendDeviceCommand(cmd);
       setConnectionStatus({
@@ -98,9 +110,10 @@ export default function DevicePanel() {
 
   // Optimistic toggle for commands with no serial feedback
   const sendToggle = async (cmd: string, key: string) => {
+    const current = (deviceStatus as Record<string, unknown>)[key];
+    logger.info(SRC, `Toggle ${key}: cmd=${cmd}, current=${current} → ${!(current ?? false)} (optimistic)`);
     try {
       await api.sendDeviceCommand(cmd);
-      const current = (deviceStatus as Record<string, unknown>)[key];
       if (typeof current === 'boolean' || current == null) {
         setConnectionStatus({
           ...connectionStatus,
@@ -231,6 +244,7 @@ export default function DevicePanel() {
               className={clsx('btn btn-sm', deviceStatus.usbLogging ? 'btn-success' : 'btn-ghost')}
               onClick={async () => {
                 const willEnable = !deviceStatus.usbLogging;
+                logger.info(SRC, `USB logging toggle: will ${willEnable ? 'enable' : 'disable'}`);
                 await send('u');
                 // Sync chart state: enable → resume, disable → pause
                 setPaused(!willEnable);

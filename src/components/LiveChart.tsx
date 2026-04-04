@@ -6,8 +6,11 @@ import 'uplot/dist/uPlot.min.css';
 import { useAppStore, getOrderedSlice } from '../store';
 import { formatCurrentShort, MARKER_COLORS, MARKER_LABELS, MarkerCategory, Marker } from '../types';
 import { api } from '../api/tauri';
+import { logger } from '../lib/logger';
 import clsx from 'clsx';
 import { Pause, Play, BookmarkPlus, X, MapPin, AlignCenter } from 'lucide-react';
+
+const SRC = 'LiveChart';
 
 const CHART_BG      = '#181825';
 const MINIMAP_BG    = '#11111b';
@@ -338,6 +341,7 @@ export default function LiveChart() {
       },
     };
 
+    logger.info(SRC, `Chart initialised: ${containerRef.current.clientWidth}x${containerRef.current.clientHeight}`);
     const u = new uPlot(opts, [[], []], containerRef.current);
     plotRef.current = u;
 
@@ -377,6 +381,7 @@ export default function LiveChart() {
     window.addEventListener('keydown', handleKeyDown);
 
     return () => {
+      logger.info(SRC, 'Chart destroyed');
       ro.disconnect();
       window.removeEventListener('keydown', handleKeyDown);
       u.destroy();

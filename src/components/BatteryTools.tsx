@@ -4,6 +4,9 @@ import { useState } from 'react';
 import { api } from '../api/tauri';
 import { BatteryRuntimeResult, RequiredCapacityResult, formatCurrentShort, formatDuration } from '../types';
 import { useAppStore } from '../store';
+import { logger } from '../lib/logger';
+
+const SRC = 'BatteryTools';
 
 interface DeratInputs {
   efficiency: number;
@@ -68,6 +71,7 @@ export default function BatteryTools() {
       setError('Current must be positive. Enter a manual value or capture data first.');
       return;
     }
+    logger.info(SRC, `Computing ${mode}: current=${avgCurrentAmps}A, ${mode === 'runtime' ? `capacity=${capacityMah}mAh` : `runtime=${desiredRuntimeH}h`}`);
     try {
       if (mode === 'runtime') {
         const r = await api.computeBatteryRuntime({
