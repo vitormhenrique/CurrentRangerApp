@@ -3,7 +3,7 @@ import { Coffee, BookOpen } from 'lucide-react';
 import { useAppStore } from '../store';
 
 const DONATE_URL = 'https://www.paypal.com/donate/?business=NT46DHPPPSBBU&no_recurring=0&item_name=buy+me+a+coffee&currency_code=USD';
-const DOCS_URL = 'https://github.com/vitormhenrique/CurrentRangerApp/wiki';
+const DOCS_URL = 'https://vitormhenrique.github.io/CurrentRangerApp/';
 
 export default function StatusBar() {
   const { connectionStatus, totalSamples, lastSampleTs, statusLog } = useAppStore();

@@ -33,6 +33,7 @@ Built with **Rust + Tauri v2**, **React + TypeScript**, and **uPlot** for high-p
 - [Battery Tools]({% link Battery-Tools.md %})
 - [Device Configuration]({% link Device-Config.md %})
 - [Workspaces and Export]({% link Workspaces.md %})
+- [Console]({% link Console.md %})
 - [Mock Device for Testing]({% link Mock-Device.md %})
 - [Keyboard Shortcuts]({% link Keyboard-Shortcuts.md %})
 

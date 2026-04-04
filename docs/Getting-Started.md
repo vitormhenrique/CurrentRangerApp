@@ -27,7 +27,7 @@ Download the latest release from the [Releases page](https://github.com/vitormhe
 
 | Area | Description |
 |------|-------------|
-| **Top bar** | Navigation (Monitor / Device Config), connection status, workspace actions |
+| **Top bar** | Navigation (Monitor / Device Config / Console), connection status, workspace actions |
 | **Left sidebar** | Connection panel, Charge/Energy integration, Battery tools |
 | **Center** | Live chart with toolbar (Y-axis, time window, pause/resume) |
 | **Bottom center** | Window stats and Selection stats |
