@@ -1,19 +1,8 @@
-// src/App.tsx — Root component with layout and event wiring
+// src/App.tsx — Root layout component
 
-import { useEffect, type ReactNode } from 'react';
+import { type ReactNode } from 'react';
 import { LineChart, Settings, Bug } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
-import type { DeviceStatus } from './types';
-import {
-  api,
-  onSerialSampleBatch,
-  onSerialStatus,
-  onSerialDeviceStatus,
-  onSerialStatusMessage,
-  onSerialInfo,
-  onSerialError,
-} from './api/tauri';
-import { logger } from './lib/logger';
 import clsx from 'clsx';
 
 import DevicePanel from './components/DevicePanel';
@@ -29,42 +18,8 @@ import DebugConsole from './components/DebugConsole';
 
 const IS_DEV = import.meta.env.DEV;
 
-/** Remove null-valued keys so they don't overwrite existing frontend state.
- *  Rust Option::None serializes as JSON null (no skip_serializing_none). */
-function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
-  for (const key in obj) {
-    if (obj[key] !== null) {
-      result[key] = obj[key];
-    }
-  }
-  return result;
-}
-
-// Score ports — higher = better match for CurrentRanger
-function pickBestPort(ports: { name: string; description?: string; vid?: number }[]) {
-  const scored = ports.map((p) => {
-    const name = p.name.toLowerCase();
-    const desc = (p.description ?? '').toLowerCase();
-    let score = 0;
-    if (desc.includes('currentranger')) score += 10;
-    if (p.vid === 0x239a) score += 8;   // Adafruit VID used by CurrentRanger R3
-    if (name.includes('usbmodem'))       score += 4;
-    if (name.includes('cu.usb'))         score += 3;  // prefer cu.* over tty.* on macOS
-    if (name.includes('ttyacm'))         score += 3;
-    if (name.includes('ttyusb'))         score += 2;
-    return { p, score };
-  });
-  scored.sort((a, b) => b.score - a.score);
-  return scored[0]?.score > 0 ? scored[0].p : null;
-}
-
 export default function App() {
   const {
-    setPorts,
-    setConnectionStatus,
-    pushSampleBatch,
-    appendStatusLog,
     currentView,
     setCurrentView,
   } = useAppStore();
@@ -72,97 +27,6 @@ export default function App() {
   const isConnected = useAppStore(selectIsConnected);
   const deviceStatus = useAppStore(selectDeviceStatus);
   const connectionStatus = useAppStore((s) => s.connectionStatus);
-
-  // Wire up Tauri event listeners on mount
-  useEffect(() => {
-    const unlisteners: (() => void)[] = [];
-    logger.info('app', 'App mounted, wiring event listeners');
-
-    (async () => {
-      const ports = await api.listPorts();
-      setPorts(ports);
-      logger.info('app', `Port discovery: found ${ports.length} ports`);
-      ports.forEach((p) =>
-        logger.debug('app', `  Port: ${p.name} desc="${p.description}" vid=${p.vid ?? 'N/A'} pid=${p.pid ?? 'N/A'}`),
-      );
-      const firstPort = pickBestPort(ports);
-      if (firstPort) {
-        logger.info('app', `Auto-selected port: ${firstPort.name} (best match)`);
-        useAppStore.getState().setSelectedPort(firstPort.name);
-      } else if (ports[0]) {
-        logger.info('app', `Auto-selected port: ${ports[0].name} (first available, no match)`);
-        useAppStore.getState().setSelectedPort(ports[0].name);
-      } else {
-        logger.warn('app', 'No serial ports found');
-      }
-
-      unlisteners.push(
-        await onSerialSampleBatch((batch) => {
-          pushSampleBatch(batch.timestamps, batch.amps);
-        }),
-        await onSerialStatus((status) => {
-          const prev = useAppStore.getState().connectionStatus.state;
-          logger.info('serial', `Status: ${prev} → ${status.state}${status.port ? ` (${status.port})` : ''}${status.error ? ` error: ${status.error}` : ''}`);
-          if (status.state === 'Connected' && prev !== 'Connected') {
-            logger.info('serial', 'New connection established — marking acquisition, resuming chart');
-            useAppStore.getState().markNewAcquisition();
-            useAppStore.getState().setPaused(false);
-            useAppStore.getState().setSelectionRange(null);
-            useAppStore.getState().setSelectionStats(null);
-          }
-          setConnectionStatus(status);
-        }),
-        await onSerialDeviceStatus((ds) => {
-          const prev = useAppStore.getState().connectionStatus.deviceStatus;
-          logger.debug('serial', `DeviceStatus update: ${JSON.stringify(ds)}`);
-          // USB logging just turned on → insert a gap so chart lines break, resume chart
-          if (ds.usbLogging === true && prev.usbLogging !== true) {
-            logger.info('serial', 'USB logging enabled — resuming chart');
-            // Only insert gap if there is existing data and chart was paused
-            if (useAppStore.getState().paused) {
-              useAppStore.getState().markNewAcquisition();
-            }
-            useAppStore.getState().setPaused(false);
-          }
-          // USB logging just turned off → pause the chart so it shows "Resume"
-          if (ds.usbLogging === false && prev.usbLogging === true) {
-            logger.info('serial', 'USB logging disabled — pausing chart');
-            useAppStore.getState().setPaused(true);
-          }
-          // Merge backend device status with frontend state to preserve
-          // optimistic fields (e.g. currentRange) that the backend doesn't track
-          const merged = { ...prev, ...stripNulls(ds as unknown as Record<string, unknown>) } as DeviceStatus;
-          setConnectionStatus({
-            ...useAppStore.getState().connectionStatus,
-            deviceStatus: merged,
-          });
-        }),
-        await onSerialStatusMessage((msg) => {
-          logger.debug('serial', `StatusMessage: ${msg}`);
-          appendStatusLog(msg);
-        }),
-        await onSerialInfo((msg) => {
-          logger.debug('serial', `Info: ${msg}`);
-          appendStatusLog(msg);
-        }),
-        await onSerialError((err) => {
-          logger.error('serial', `Error event: ${err}`);
-          appendStatusLog(`⚠ Serial error: ${err}`);
-          setConnectionStatus({
-            ...useAppStore.getState().connectionStatus,
-            state: 'Error',
-            error: err,
-          });
-        }),
-      );
-      logger.info('app', 'All event listeners wired');
-    })();
-
-    return () => {
-      logger.info('app', 'App unmounting, cleaning up event listeners');
-      unlisteners.forEach((fn) => fn());
-    };
-  }, []);
 
   const stateColor =
     connectionStatus.state === 'Connected'

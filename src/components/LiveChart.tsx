@@ -571,6 +571,28 @@ export default function LiveChart() {
     const tsArr = Array.from(dispTs);
     const ampsArr: (number | null)[] = Array.from(dispAmps).map((v) => (isFinite(v) ? v : null));
 
+    // Ensure timestamps are monotonically increasing (uPlot requires sorted X).
+    // If any out-of-order timestamp is detected, sort both arrays together.
+    let needsSort = false;
+    for (let i = 1; i < tsArr.length; i++) {
+      if (tsArr[i] < tsArr[i - 1]) { needsSort = true; break; }
+    }
+    if (needsSort) {
+      // Find and log the first violation for debugging
+      for (let i = 1; i < tsArr.length; i++) {
+        if (tsArr[i] < tsArr[i - 1]) {
+          const diff = tsArr[i] - tsArr[i - 1];
+          logger.warn(SRC, `Unsorted at idx ${i}/${tsArr.length}: ts[${i-1}]=${tsArr[i-1].toFixed(6)} (amp=${ampsArr[i-1]}), ts[${i}]=${tsArr[i].toFixed(6)} (amp=${ampsArr[i]}), diff=${diff.toFixed(6)}s`);
+          break;
+        }
+      }
+      const idx = tsArr.map((_, i) => i);
+      idx.sort((a, b) => tsArr[a] - tsArr[b]);
+      const sTs = idx.map(i => tsArr[i]);
+      const sAmps = idx.map(i => ampsArr[i]);
+      for (let i = 0; i < sTs.length; i++) { tsArr[i] = sTs[i]; ampsArr[i] = sAmps[i]; }
+    }
+
     // Flag our own setScale calls so the hook doesn't treat them as user pan
     programmaticScale.current = true;
     u.batch(() => {
@@ -950,20 +972,19 @@ export default function LiveChart() {
             const nextPaused = !paused;
 
             if (nextPaused) {
-              // Pausing → snapshot the current viewport so renderFrame preserves it
+              // Pausing → insert gap to mark end of this segment, then stop data
+              useAppStore.getState().markNewAcquisition();
               setPaused(true);
 
               const state = useAppStore.getState();
               if (state.connectionStatus.state === 'Connected' &&
                   state.connectionStatus.deviceStatus.usbLogging === true) {
-                // Disable USB logging while paused to stop data flow
                 try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
               }
             } else {
-              // Resuming → insert gap BEFORE unpausing so it's placed correctly
+              // Resuming → insert gap to mark start of new segment before new data arrives
               useAppStore.getState().markNewAcquisition();
 
-              // Clear selection, reset viewport so live mode takes over
               setSelectionRange(null);
               setSelectionStats(null);
               plotRef.current?.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
@@ -973,7 +994,6 @@ export default function LiveChart() {
               const state = useAppStore.getState();
               if (state.connectionStatus.state === 'Connected' &&
                   state.connectionStatus.deviceStatus.usbLogging !== true) {
-                // Re-enable USB logging to resume data flow
                 try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
               }
             }

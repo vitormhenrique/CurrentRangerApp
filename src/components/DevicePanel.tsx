@@ -244,6 +244,9 @@ export default function DevicePanel() {
               onClick={async () => {
                 const willEnable = !deviceStatus.usbLogging;
                 logger.info(SRC, `USB logging toggle: will ${willEnable ? 'enable' : 'disable'}`);
+                // Insert NaN gap before toggling so the break is placed
+                // at the correct position (before any new samples arrive)
+                useAppStore.getState().markNewAcquisition();
                 await send('u');
               }}
             >
