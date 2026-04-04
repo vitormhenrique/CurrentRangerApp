@@ -1,7 +1,7 @@
 // src/App.tsx — Root layout component
 
 import { type ReactNode } from 'react';
-import { LineChart, Settings, Bug } from 'lucide-react';
+import { LineChart, Settings, Terminal } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
 import clsx from 'clsx';
 
@@ -15,8 +15,6 @@ import WorkspacePanel from './components/WorkspacePanel';
 import IntegrationPanel from './components/IntegrationPanel';
 import StatusBar from './components/StatusBar';
 import DebugConsole from './components/DebugConsole';
-
-const IS_DEV = import.meta.env.DEV;
 
 export default function App() {
   const {
@@ -78,9 +76,7 @@ export default function App() {
         <nav className="flex items-center gap-1">
           <NavTab view="monitor" label="Monitor" icon={<LineChart size={14} />} />
           <NavTab view="device-config" label="Device Config" icon={<Settings size={14} />} />
-          {IS_DEV && (
-            <NavTab view="debug" label="Debug" icon={<Bug size={14} />} />
-          )}
+          <NavTab view="debug" label="Console" icon={<Terminal size={14} />} />
         </nav>
 
         <div className="flex-1" />
@@ -156,11 +152,9 @@ export default function App() {
       <div className={clsx('flex-1 overflow-hidden', currentView !== 'device-config' && 'hidden')}>
         <DeviceConfig />
       </div>
-      {IS_DEV && (
-        <div className={clsx('flex-1 overflow-hidden', currentView !== 'debug' && 'hidden')}>
-          <DebugConsole />
-        </div>
-      )}
+      <div className={clsx('flex-1 overflow-hidden', currentView !== 'debug' && 'hidden')}>
+        <DebugConsole />
+      </div>
 
       {/* Status bar */}
       <StatusBar />
