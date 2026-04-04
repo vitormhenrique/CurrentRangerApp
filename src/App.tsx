@@ -3,6 +3,7 @@
 import { useEffect, type ReactNode } from 'react';
 import { LineChart, Settings, Bug } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
+import type { DeviceStatus } from './types';
 import {
   api,
   onSerialSampleBatch,
@@ -27,6 +28,18 @@ import StatusBar from './components/StatusBar';
 import DebugConsole from './components/DebugConsole';
 
 const IS_DEV = import.meta.env.DEV;
+
+/** Remove null-valued keys so they don't overwrite existing frontend state.
+ *  Rust Option::None serializes as JSON null (no skip_serializing_none). */
+function stripNulls(obj: Record<string, unknown>): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  for (const key in obj) {
+    if (obj[key] !== null) {
+      result[key] = obj[key];
+    }
+  }
+  return result;
+}
 
 // Score ports — higher = better match for CurrentRanger
 function pickBestPort(ports: { name: string; description?: string; vid?: number }[]) {
@@ -102,14 +115,26 @@ export default function App() {
         await onSerialDeviceStatus((ds) => {
           const prev = useAppStore.getState().connectionStatus.deviceStatus;
           logger.debug('serial', `DeviceStatus update: ${JSON.stringify(ds)}`);
-          // USB logging just turned on → insert a gap so chart lines break
+          // USB logging just turned on → insert a gap so chart lines break, resume chart
           if (ds.usbLogging === true && prev.usbLogging !== true) {
-            logger.info('serial', 'USB logging enabled — inserting acquisition gap');
-            useAppStore.getState().markNewAcquisition();
+            logger.info('serial', 'USB logging enabled — resuming chart');
+            // Only insert gap if there is existing data and chart was paused
+            if (useAppStore.getState().paused) {
+              useAppStore.getState().markNewAcquisition();
+            }
+            useAppStore.getState().setPaused(false);
           }
+          // USB logging just turned off → pause the chart so it shows "Resume"
+          if (ds.usbLogging === false && prev.usbLogging === true) {
+            logger.info('serial', 'USB logging disabled — pausing chart');
+            useAppStore.getState().setPaused(true);
+          }
+          // Merge backend device status with frontend state to preserve
+          // optimistic fields (e.g. currentRange) that the backend doesn't track
+          const merged = { ...prev, ...stripNulls(ds as unknown as Record<string, unknown>) } as DeviceStatus;
           setConnectionStatus({
             ...useAppStore.getState().connectionStatus,
-            deviceStatus: ds,
+            deviceStatus: merged,
           });
         }),
         await onSerialStatusMessage((msg) => {

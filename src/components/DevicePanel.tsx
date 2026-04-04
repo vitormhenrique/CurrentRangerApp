@@ -37,7 +37,6 @@ export default function DevicePanel() {
     setCurrentView,
     connectionStatus,
     setConnectionStatus,
-    setPaused,
   } = useAppStore();
 
   const isConnected = useAppStore(selectIsConnected);
@@ -237,7 +236,7 @@ export default function DevicePanel() {
           <div className="divider" />
           <div className="panel-title">Quick Controls</div>
 
-          {/* USB logging toggle — keeps chart pause/resume in sync */}
+          {/* USB logging toggle — chart pause/resume handled by event listener */}
           <div className="flex items-center justify-between">
             <span className="text-xs text-text-muted">USB Logging</span>
             <button
@@ -246,8 +245,6 @@ export default function DevicePanel() {
                 const willEnable = !deviceStatus.usbLogging;
                 logger.info(SRC, `USB logging toggle: will ${willEnable ? 'enable' : 'disable'}`);
                 await send('u');
-                // Sync chart state: enable → resume, disable → pause
-                setPaused(!willEnable);
               }}
             >
               {deviceStatus.usbLogging ? 'ON' : 'OFF'}

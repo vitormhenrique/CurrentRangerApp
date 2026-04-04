@@ -85,7 +85,6 @@ export default function LiveChart() {
   const minimapDragging    = useRef(false);
   const pausedRef          = useRef(false);
   const connectedRef       = useRef(false);
-  const disabledUsbOnPause = useRef(false);
   // Tracks whether a setScale('x') call is from our render loop (not user pan/zoom)
   const programmaticScale  = useRef(false);
   // Mirrors yAutoScale state for use inside uPlot hook closures
@@ -139,7 +138,6 @@ export default function LiveChart() {
     connectedRef.current = isConnected;
     // On reconnect, reset stale state so live mode works cleanly
     if (isConnected) {
-      disabledUsbOnPause.current = false;
       viewportRef.current = null;
     }
   }, [isConnected]);
@@ -953,30 +951,30 @@ export default function LiveChart() {
 
             if (nextPaused) {
               // Pausing → snapshot the current viewport so renderFrame preserves it
-              // (viewportRef is already set by the setScale hook, so nothing extra needed)
               setPaused(true);
+
+              const state = useAppStore.getState();
+              if (state.connectionStatus.state === 'Connected' &&
+                  state.connectionStatus.deviceStatus.usbLogging === true) {
+                // Disable USB logging while paused to stop data flow
+                try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
+              }
             } else {
-              // Resuming → clear selection, reset viewport so live mode takes over
+              // Resuming → insert gap BEFORE unpausing so it's placed correctly
+              useAppStore.getState().markNewAcquisition();
+
+              // Clear selection, reset viewport so live mode takes over
               setSelectionRange(null);
               setSelectionStats(null);
               plotRef.current?.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
-              viewportRef.current = null; // let live mode set the viewport
+              viewportRef.current = null;
               setPaused(false);
-            }
 
-            const state = useAppStore.getState();
-            if (state.connectionStatus.state === 'Connected') {
-              if (nextPaused) {
-                if (state.connectionStatus.deviceStatus.usbLogging === true) {
-                  disabledUsbOnPause.current = true;
-                  try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
-                }
-              } else {
-                if (disabledUsbOnPause.current) {
-                  disabledUsbOnPause.current = false;
-                  // Re-enabling USB logging → gap is inserted by onSerialDeviceStatus handler
-                  try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
-                }
+              const state = useAppStore.getState();
+              if (state.connectionStatus.state === 'Connected' &&
+                  state.connectionStatus.deviceStatus.usbLogging !== true) {
+                // Re-enable USB logging to resume data flow
+                try { await api.sendDeviceCommand('u'); } catch { /* ignore */ }
               }
             }
           }}
