@@ -8,6 +8,8 @@ A modern cross-platform desktop application for managing and analyzing data from
 
 Built with **Rust + Tauri v2**, **React + TypeScript**, and **uplot** for high-performance real-time charting.
 
+![CurrentRanger App — Monitor view](img/main_page.png)
+
 ---
 
 ## Features
@@ -20,12 +22,79 @@ Built with **Rust + Tauri v2**, **React + TypeScript**, and **uplot** for high-p
 - **Charge & energy integration** — Coulombs, mAh, Ah; Joules, Wh, mWh with user-configured voltage
 - **Battery tools** — runtime estimator and required-capacity estimator with derating factors (regulator efficiency, depth of discharge, aging margin)
 - **User markers** — annotate any point in time with labels, colors, categories (boot, idle, sleep, TX, sensor, note); rendered as vertical rules on chart
+
+![Range marker and selection](img/range_marker.png)
+
 - **Workspace save/load** — full JSON workspace: samples, markers, settings, derived summaries, chart state
 - **Data export** — CSV (time, current), JSON (with full metadata), marker export
+- **Console** — built-in log viewer for troubleshooting serial communication and app events
+
+![Device configuration panel](img/device_config.png)
 
 ---
 
-## Requirements
+## Installation
+
+Download the latest release for your platform from the [Releases page](https://github.com/vitormhenrique/CurrentRangerApp/releases).
+
+| Platform | File |
+|----------|------|
+| **macOS (Apple Silicon)** | `CurrentRanger_x.x.x_aarch64.dmg` |
+| **macOS (Intel)** | `CurrentRanger_x.x.x_x64.dmg` |
+| **Windows** | `CurrentRanger_x.x.x_x64-setup.exe` or `.msi` |
+| **Linux (Debian/Ubuntu)** | `current-ranger_x.x.x_amd64.deb` |
+| **Linux (AppImage)** | `CurrentRanger_x.x.x_amd64.AppImage` |
+
+### macOS
+
+1. Open the `.dmg` file
+2. Drag **CurrentRanger** into your Applications folder
+3. On first launch, macOS may show a Gatekeeper warning — right-click the app and select **Open**, then click **Open** in the dialog
+
+### Windows
+
+1. Run the `.exe` installer (or `.msi` for system-wide install)
+2. Follow the setup wizard
+3. You may need to install a USB serial driver if your system doesn't recognize the CurrentRanger — the device uses a standard USB CDC ACM interface
+
+### Linux
+
+**Debian/Ubuntu:**
+```bash
+sudo dpkg -i current-ranger_x.x.x_amd64.deb
+```
+
+**AppImage:**
+```bash
+chmod +x CurrentRanger_x.x.x_amd64.AppImage
+./CurrentRanger_x.x.x_amd64.AppImage
+```
+
+On Linux, you may need to add your user to the `dialout` group for serial port access:
+```bash
+sudo usermod -aG dialout $USER
+# Log out and back in for the change to take effect
+```
+
+---
+
+## Getting Started
+
+1. Connect your CurrentRanger R3 via USB
+2. Launch the application
+3. The app will automatically detect and select the CurrentRanger serial port
+4. Click **Connect** in the left panel
+5. The device will automatically enable USB logging and begin streaming data
+
+For full documentation, visit [vitormhenrique.github.io/CurrentRangerApp](https://vitormhenrique.github.io/CurrentRangerApp/).
+
+---
+
+## Development
+
+The following is only needed if you want to build from source or contribute to the project.
+
+### Requirements
 
 | Tool | Version |
 |------|---------|
@@ -50,9 +119,7 @@ brew install just   # or: cargo install just
 ### Windows
 Follow [Tauri Windows prerequisites](https://v2.tauri.app/start/prerequisites/#windows).
 
----
-
-## Quick Start
+### Quick Start
 
 ```bash
 # Install all deps (Node + Rust)

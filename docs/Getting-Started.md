@@ -25,6 +25,8 @@ Download the latest release from the [Releases page](https://github.com/vitormhe
 
 ## Interface Overview
 
+![CurrentRanger App — Main interface](img/main_page.png)
+
 | Area | Description |
 |------|-------------|
 | **Top bar** | Navigation (Monitor / Device Config / Console), connection status, workspace actions |

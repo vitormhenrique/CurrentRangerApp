@@ -10,6 +10,8 @@ nav_order: 4
 
 The live chart displays real-time current measurements using a high-performance uPlot renderer capable of displaying 500,000+ data points smoothly.
 
+![Live chart with real-time current monitoring](img/main_page.png)
+
 ## Toolbar
 
 | Control | Description |
@@ -48,6 +50,8 @@ When USB logging is toggled off and back on, or when reconnecting, a line break 
 ## Selecting a Range
 
 Click and drag on the chart to select a time range. The **Selection** stats panel below the chart shows statistics for the selected region.
+
+![Drag selection with stats](img/selection.png)
 
 - **Left-click** on empty chart area clears the selection
 - **Left-click** on a saved range marker loads that marker's time range as the selection

@@ -298,8 +298,18 @@ impl SerialManager {
             };
 
         let port = match open_result {
-            Ok(p) => {
+            Ok(mut p) => {
                 log::info!("SerialManager::connect: port opened successfully");
+                // On real serial ports (not PTY), de-assert DTR to prevent the
+                // SAMD21's USB CDC bootloader from interpreting a DTR toggle as a
+                // reset request (1200-baud touch).
+                if !is_pty {
+                    if let Err(e) = p.write_data_terminal_ready(false) {
+                        log::warn!("SerialManager::connect: failed to de-assert DTR: {}", e);
+                    } else {
+                        log::debug!("SerialManager::connect: DTR de-asserted on real serial port");
+                    }
+                }
                 p
             }
             Err(msg) => {
@@ -430,6 +440,17 @@ fn reader_thread(
     let mut device_status = DeviceStatus::default();
     let mut _sample_count: u64 = 0;
     let mut current_format = *format_rx.borrow();
+
+    // Monotonic timestamp anchor: pair a wall-clock reading with an Instant.
+    // All subsequent sample timestamps are computed as:
+    //   anchor_wall + (Instant::now() - anchor_mono)
+    // This guarantees strictly monotonic timestamps even if the system clock
+    // jumps backwards (NTP adjustments, etc.).
+    let anchor_wall = {
+        let now = chrono::Utc::now();
+        now.timestamp() as f64 + now.timestamp_subsec_nanos() as f64 * 1e-9
+    };
+    let anchor_mono = Instant::now();
 
     // Batch accumulators
     let mut batch_ts: Vec<f64> = Vec::with_capacity(128);
@@ -602,7 +623,8 @@ fn reader_thread(
 
                     match &parsed {
                         ParsedLine::Sample { amps } => {
-                            let sample = Sample::new(*amps);
+                            let mono_ts = anchor_wall + anchor_mono.elapsed().as_secs_f64();
+                            let sample = Sample { timestamp: mono_ts, amps: *amps };
                             _sample_count += 1;
 
                             // Push to Rust-side store (for export / stats)

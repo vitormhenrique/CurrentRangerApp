@@ -15,6 +15,8 @@ Markers let you annotate specific timestamps or time ranges on the chart. They p
 - **Point marker**: A single timestamp, shown as a vertical line with a triangle cap
 - **Range marker**: A start and end timestamp, shown as a translucent shaded region with dashed borders
 
+![Range marker on the chart](img/range_marker.png)
+
 ## Adding Markers
 
 ### Right-click (context menu)

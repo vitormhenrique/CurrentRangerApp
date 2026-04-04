@@ -11,6 +11,8 @@ A desktop companion application for the [CurrentRanger R3](https://lowpowerlab.c
 
 Built with **Rust + Tauri v2**, **React + TypeScript**, and **uPlot** for high-performance real-time charting.
 
+![CurrentRanger App — Monitor view](img/main_page.png)
+
 ## Features
 
 - **Real-time current monitoring** with 50 Hz+ sample rates

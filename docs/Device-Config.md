@@ -12,6 +12,8 @@ The **Device Config** tab provides full access to all CurrentRanger R3 firmware 
 
 You can switch to Device Config at any time without interrupting data capture — the chart continues running in the background.
 
+![Device configuration panel](img/device_config.png)
+
 ## Measurement
 
 | Setting | Command | Description |
