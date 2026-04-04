@@ -177,11 +177,22 @@ fn open_pty_slave(path: &str) -> Result<Box<dyn serialport::SerialPort>, String>
             libc::cfsetospeed(&mut tios, libc::B115200);
             libc::tcsetattr(fd, libc::TCSANOW, &tios);
         }
+
+        // Clear O_NONBLOCK so reads block with timeout instead of busy-looping.
+        let flags = libc::fcntl(fd, libc::F_GETFL);
+        if flags >= 0 {
+            libc::fcntl(fd, libc::F_SETFL, flags & !libc::O_NONBLOCK);
+            log::debug!("open_pty_slave: cleared O_NONBLOCK on fd {}", fd);
+        }
     }
 
     // from_raw_fd wraps the fd without calling TIOCEXCL or IOSSIOSPEED.
-    // It sets a default 100 ms read timeout, matching our normal open path.
-    let port = unsafe { serialport::TTYPort::from_raw_fd(fd) };
+    let mut port = unsafe { serialport::TTYPort::from_raw_fd(fd) };
+    // Set a 100ms read timeout so the reader thread checks its command channel regularly.
+    use serialport::SerialPort;
+    if let Err(e) = port.set_timeout(Duration::from_millis(100)) {
+        log::warn!("open_pty_slave: failed to set timeout: {}", e);
+    }
     Ok(Box::new(port))
 }
 
@@ -329,16 +340,32 @@ impl SerialManager {
             let _ = tx.send(ReaderCommand::Stop);
         }
         if let Some(h) = self.reader_handle.take() {
-            log::debug!("SerialManager::disconnect: joining reader thread (2s timeout)");
-            // Join the OS thread; use spawn_blocking so we don't block tokio
-            let _ = tokio::time::timeout(
-                Duration::from_secs(2),
-                tokio::task::spawn_blocking(move || {
-                    let _ = h.join();
-                }),
+            log::debug!("SerialManager::disconnect: joining reader thread (5s timeout)");
+            // Join the OS thread; use spawn_blocking so we don't block tokio.
+            // The reader thread checks its channel every ~100ms (port read timeout),
+            // so it should exit well within 5s.
+            match tokio::time::timeout(
+                Duration::from_secs(5),
+                tokio::task::spawn_blocking(move || h.join()),
             )
-            .await;
-            log::debug!("SerialManager::disconnect: reader thread joined");
+            .await
+            {
+                Ok(Ok(Ok(()))) => {
+                    log::info!("SerialManager::disconnect: reader thread joined cleanly");
+                }
+                Ok(Ok(Err(_panic))) => {
+                    log::error!("SerialManager::disconnect: reader thread panicked during join");
+                }
+                Ok(Err(e)) => {
+                    log::error!("SerialManager::disconnect: spawn_blocking failed: {}", e);
+                }
+                Err(_) => {
+                    log::error!(
+                        "SerialManager::disconnect: reader thread join timed out after 5s! \
+                         Port fd may still be held by orphaned thread."
+                    );
+                }
+            }
         }
         self.format_tx.take();
         self.status.state = ConnectionState::Disconnected;
@@ -413,48 +440,125 @@ fn reader_thread(
 
     // ─────────────────────────────────────────────────────────────────────
     // USB Logging Bootstrap
+    //
+    // Robust sequence:
+    // 1. Sleep 200ms to let the port settle after open.
+    // 2. Drain all buffered data (stale samples from a previous session).
+    // 3. Send 'U' to query USB logging state (does NOT toggle).
+    // 4. Read lines for up to 1s looking for USB_LOGGING_ENABLED/DISABLED,
+    //    skipping anything that looks like sample data.
+    // 5. If logging is off (or unknown), send 'u' to toggle it on.
+    // 6. Drain again before entering the main loop.
     // ─────────────────────────────────────────────────────────────────────
 
+    // 1. Let the port settle
     std::thread::sleep(Duration::from_millis(200));
-    log::debug!("Bootstrap: clearing input buffer");
-    let _ = port.clear(serialport::ClearBuffer::Input);
 
+    // 2. Drain stale data from the port buffer (time-limited to avoid
+    //    eating live samples if device is already streaming)
+    log::debug!("Bootstrap: draining stale data from port buffer");
+    {
+        let mut drain_buf = [0u8; 1024];
+        let drain_deadline = Instant::now() + Duration::from_millis(300);
+        while Instant::now() < drain_deadline {
+            match port.read(&mut drain_buf) {
+                Ok(n) if n > 0 => {
+                    log::debug!("Bootstrap: drained {} stale bytes", n);
+                }
+                _ => break,
+            }
+        }
+    }
+
+    // 3. Send 'U' to query USB logging state
     log::debug!("Bootstrap: sending 'U' (USB logging query)");
     if let Err(e) = port.write_all(b"U") {
-        log::warn!("Failed to send USB logging query: {}", e);
+        log::warn!("Bootstrap: failed to send USB logging query: {}", e);
     }
     let _ = port.flush();
 
-    std::thread::sleep(Duration::from_millis(300));
+    // 4. Read lines for up to 1s, looking for USB_LOGGING_ENABLED/DISABLED
+    let mut response_buf = String::new();
+    let mut raw_bytes = [0u8; 512];
+    let bootstrap_deadline = Instant::now() + Duration::from_secs(1);
+    let mut usb_state: Option<bool> = None; // Some(true) = ON, Some(false) = OFF
 
-    let mut bootstrap_buf = [0u8; 512];
-    let mut response = String::new();
-    loop {
-        match port.read(&mut bootstrap_buf) {
+    log::debug!("Bootstrap: waiting for USB logging state response (1s timeout)");
+    while Instant::now() < bootstrap_deadline {
+        match port.read(&mut raw_bytes) {
             Ok(n) if n > 0 => {
-                response.push_str(&String::from_utf8_lossy(&bootstrap_buf[..n]));
+                response_buf.push_str(&String::from_utf8_lossy(&raw_bytes[..n]));
+
+                // Process complete lines
+                while let Some(nl) = response_buf.find('\n') {
+                    let line = response_buf[..nl].trim().to_string();
+                    response_buf.drain(..=nl);
+
+                    if line.is_empty() {
+                        continue;
+                    }
+
+                    if line.contains("USB_LOGGING_ENABLED") {
+                        log::info!("Bootstrap: got USB_LOGGING_ENABLED");
+                        usb_state = Some(true);
+                    } else if line.contains("USB_LOGGING_DISABLED") {
+                        log::info!("Bootstrap: got USB_LOGGING_DISABLED");
+                        usb_state = Some(false);
+                    } else {
+                        // Likely a sample line or other noise — skip it
+                        log::debug!("Bootstrap: skipping line: {:?}", line);
+                    }
+                }
+
+                // If we found the state, no need to wait longer
+                if usb_state.is_some() {
+                    break;
+                }
             }
-            _ => break,
+            _ => {
+                // No data yet — keep waiting
+            }
         }
     }
-    log::info!("USB logging query response: {:?}", response.trim());
 
-    let usb_logging_on = response.contains("USB_LOGGING_ENABLED");
-    let usb_logging_off = response.contains("USB_LOGGING_DISABLED");
-    log::debug!("Bootstrap: usb_on={}, usb_off={}", usb_logging_on, usb_logging_off);
-
-    if usb_logging_off || !usb_logging_on {
-        log::info!("USB logging is OFF, enabling (sending 'u')...");
-        if let Err(e) = port.write_all(b"u") {
-            log::warn!("Failed to enable USB logging: {}", e);
+    // 5. Enable logging if it's off or unknown
+    match usb_state {
+        Some(true) => {
+            log::info!("Bootstrap: USB logging already ON, no toggle needed");
         }
-        let _ = port.flush();
-        std::thread::sleep(Duration::from_millis(200));
-    } else {
-        log::info!("USB logging already ON");
+        Some(false) => {
+            log::info!("Bootstrap: USB logging is OFF, sending 'u' to enable");
+            if let Err(e) = port.write_all(b"u") {
+                log::warn!("Bootstrap: failed to enable USB logging: {}", e);
+            }
+            let _ = port.flush();
+            std::thread::sleep(Duration::from_millis(200));
+        }
+        None => {
+            log::warn!("Bootstrap: no response to 'U' query within 1s, assuming OFF — sending 'u'");
+            if let Err(e) = port.write_all(b"u") {
+                log::warn!("Bootstrap: failed to enable USB logging: {}", e);
+            }
+            let _ = port.flush();
+            std::thread::sleep(Duration::from_millis(200));
+        }
     }
 
-    let _ = port.clear(serialport::ClearBuffer::Input);
+    // 6. Brief drain to skip any bootstrap echo/response noise, but NOT
+    //    an infinite loop — the device may already be streaming samples.
+    log::debug!("Bootstrap: brief drain before main loop");
+    {
+        let mut drain_buf = [0u8; 1024];
+        let drain_deadline = Instant::now() + Duration::from_millis(150);
+        while Instant::now() < drain_deadline {
+            match port.read(&mut drain_buf) {
+                Ok(n) if n > 0 => {
+                    log::debug!("Bootstrap: drained {} bytes in final drain", n);
+                }
+                _ => break,
+            }
+        }
+    }
     log::info!("Bootstrap complete, entering main read loop");
 
     // ─────────────────────────────────────────────────────────────────────

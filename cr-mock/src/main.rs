@@ -607,21 +607,50 @@ fn io_loop<R: Read, W: Write>(
     let mut buf        = [0u8; 256];
     let mut samples    = 0u64;
     let mut last_tick  = Instant::now();
+    let mut slave_connected = false;
 
     loop {
         // ── Inbound commands ──────────────────────────────────────────────
         match reader.read(&mut buf) {
             Ok(n) if n > 0 => {
+                if !slave_connected {
+                    slave_connected = true;
+                    if let Ok(mut d) = info.lock() { d.connected = true; }
+                }
                 for &b in &buf[..n] {
                     let resp = device.handle_command(b);
                     if !resp.is_empty() { let _ = writer.write_all(&resp); }
                 }
                 device.sync_info(&info);
-                if let Ok(mut d) = info.lock() { d.connected = true; }
             }
             Ok(_) => {}
             Err(ref e) if matches!(e.kind(),
                 std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut) => {}
+            Err(ref e) if e.raw_os_error() == Some(libc::EIO) => {
+                // EIO on PTY master means the slave side was closed (client disconnected).
+                // Reset device state so the next connection starts clean.
+                if slave_connected {
+                    slave_connected = false;
+                    device = Device::new();
+                    samples = 0;
+                    device.sync_info(&info);
+                    if let Ok(mut d) = info.lock() {
+                        d.connected = false;
+                        d.samples_sent = 0;
+                        d.last_amps = None;
+                    }
+                    if let Ok(mut r) = recent.lock() { r.clear(); }
+                    // Drain any stale data from the master buffer
+                    let mut drain = [0u8; 1024];
+                    loop {
+                        match reader.read(&mut drain) {
+                            Ok(n) if n > 0 => {}
+                            _ => break,
+                        }
+                    }
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
             Err(_) => { std::thread::sleep(Duration::from_millis(20)); }
         }
 
@@ -643,8 +672,28 @@ fn io_loop<R: Read, W: Write>(
             }
 
             let sample = device.format_sample(amps, rd);
-            if writer.write_all(&sample).is_err() {
-                std::thread::sleep(Duration::from_millis(50));
+            match writer.write_all(&sample) {
+                Ok(()) => {}
+                Err(ref e) if e.raw_os_error() == Some(libc::EIO) => {
+                    // Slave disconnected during write — reset device
+                    if slave_connected {
+                        slave_connected = false;
+                        device = Device::new();
+                        samples = 0;
+                        device.sync_info(&info);
+                        if let Ok(mut d) = info.lock() {
+                            d.connected = false;
+                            d.samples_sent = 0;
+                            d.last_amps = None;
+                        }
+                        if let Ok(mut r) = recent.lock() { r.clear(); }
+                    }
+                    std::thread::sleep(Duration::from_millis(50));
+                    continue;
+                }
+                Err(_) => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
             }
 
             samples += 1;
