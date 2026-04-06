@@ -61,6 +61,10 @@ pub fn integrate(input: &IntegrationInput) -> IntegrationResult {
         if dt <= 0.0 {
             continue;
         }
+        // Skip NaN gap sentinels
+        if !amps[i - 1].is_finite() || !amps[i].is_finite() {
+            continue;
+        }
         let avg_i = (amps[i - 1] + amps[i]) * 0.5;
         charge_coulombs += avg_i * dt;
     }
@@ -308,6 +312,21 @@ mod tests {
             aging_margin: 1.0,
         };
         assert!(estimate_required_capacity(&input).is_err());
+    }
+
+    #[test]
+    fn test_integrate_skips_nan_gaps() {
+        // Simulate: 1mA for 1s, NaN gap, 1mA for 1s → charge ≈ 2e-3 C
+        let input = IntegrationInput {
+            timestamps: vec![0.0, 1.0, 1.0001, 5.0, 6.0],
+            amps: vec![1e-3, 1e-3, f64::NAN, 1e-3, 1e-3],
+            voltage: 3.3,
+        };
+        let r = integrate(&input);
+        assert!(r.charge_coulombs.is_finite());
+        assert!(r.charge_coulombs > 0.0);
+        // The NaN pair should be skipped, so charge ≈ 1e-3 (first segment) + 1e-3 (second segment) = 2e-3
+        assert!(approx_eq(r.charge_coulombs, 2e-3, 1e-6));
     }
 
     #[test]

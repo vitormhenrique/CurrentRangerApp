@@ -110,7 +110,7 @@ export interface AppStore {
   statusLog: string[];
 
   // Navigation
-  currentView: 'monitor' | 'device-config' | 'debug';
+  currentView: 'monitor' | 'device-config' | 'debug' | 'settings';
   /** Set by MarkersPanel to ask LiveChart to jump to a timestamp range. Cleared after consumption. */
   navigateTo: { tMin: number; tMax: number } | null;
 
@@ -140,7 +140,7 @@ export interface AppStore {
   setSettings: (s: Partial<AppSettings>) => void;
   setIntegrationResult: (r: IntegrationResult | null) => void;
   appendStatusLog: (msg: string) => void;
-  setCurrentView: (view: 'monitor' | 'device-config' | 'debug') => void;
+  setCurrentView: (view: 'monitor' | 'device-config' | 'debug' | 'settings') => void;
 }
 
 export const useAppStore = create<AppStore>((set, get) => ({
@@ -174,6 +174,7 @@ export const useAppStore = create<AppStore>((set, get) => ({
     voltageV: 3.3,
     loggingFormat: 'EXPONENT',
     timeWindowS: 30,
+    hideDeadTime: false,
   },
 
   integrationResult: null,

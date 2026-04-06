@@ -28,7 +28,7 @@ export default function IntegrationPanel() {
         const slice = getOrderedSlice(useAppStore.getState().sampleBuffer);
         const filtered = { ts: [] as number[], amps: [] as number[] };
         for (let i = 0; i < slice.ts.length; i++) {
-          if (slice.ts[i] >= t0 && slice.ts[i] <= t1) {
+          if (slice.ts[i] >= t0 && slice.ts[i] <= t1 && isFinite(slice.amps[i])) {
             filtered.ts.push(slice.ts[i]);
             filtered.amps.push(slice.amps[i]);
           }

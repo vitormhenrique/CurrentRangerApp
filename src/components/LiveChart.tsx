@@ -7,6 +7,7 @@ import { useAppStore, getOrderedSlice } from '../store';
 import { formatCurrentShort, MARKER_COLORS, MARKER_LABELS, MarkerCategory, Marker } from '../types';
 import { api } from '../api/tauri';
 import { logger } from '../lib/logger';
+import { compressGaps, realToCompressed, compressedToReal, type GapCompressionResult } from '../lib/gapCompression';
 import clsx from 'clsx';
 import { Pause, Play, BookmarkPlus, X, MapPin, AlignCenter } from 'lucide-react';
 
@@ -89,6 +90,8 @@ export default function LiveChart() {
   const programmaticScale  = useRef(false);
   // Mirrors yAutoScale state for use inside uPlot hook closures
   const yAutoScaleRef      = useRef(true);
+  // Gap compression data for draw hook and selection handling
+  const gapDataRef         = useRef<GapCompressionResult | null>(null);
 
   const {
     paused,
@@ -106,6 +109,7 @@ export default function LiveChart() {
   const isConnected = useAppStore((s) => s.connectionStatus.state === 'Connected');
   // Stop the rAF loop when on device-config to keep that view responsive
   const currentView = useAppStore((s) => s.currentView);
+  const hideDeadTime = useAppStore((s) => s.settings.hideDeadTime);
 
   const [liveValue, setLiveValue] = useState<number | null>(null);
 
@@ -215,7 +219,10 @@ export default function LiveChart() {
 
                 // Recompute Y scale from data visible in the new X range
                 if (yAutoScaleRef.current) {
-                  const { ts, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+                  const { ts: rawTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+                  // When hideDeadTime is on, viewport coords are compressed, so compare against compressed ts
+                  const gd = gapDataRef.current;
+                  const ts = gd ? compressGaps(rawTs, amps).compressedTs : rawTs;
                   let yLo = Infinity, yHi = -Infinity;
                   for (let i = 0; i < ts.length; i++) {
                     if (ts[i] >= min && ts[i] <= max && isFinite(amps[i])) {
@@ -269,11 +276,16 @@ export default function LiveChart() {
             const ctx = u.ctx;
             const { top, height, left, width } = u.bbox;
             ctx.save();
+            const gd = gapDataRef.current;
+
             for (const m of markersRef.current) {
-              const x0 = u.valToPos(m.timestamp, 'x', true);
+              // Convert marker timestamps when gap compression is active
+              const mTs = gd ? realToCompressed(m.timestamp, gd.gapPositions, gd.cumulativeOffsets) : m.timestamp;
               const color = m.color || MARKER_COLORS[m.category as MarkerCategory] || '#cba6f7';
               if (m.endTimestamp != null) {
-                const x1 = u.valToPos(m.endTimestamp, 'x', true);
+                const mEnd = gd ? realToCompressed(m.endTimestamp, gd.gapPositions, gd.cumulativeOffsets) : m.endTimestamp;
+                const x0 = u.valToPos(mTs, 'x', true);
+                const x1 = u.valToPos(mEnd, 'x', true);
                 const xL = Math.min(x0, x1);
                 const xR = Math.max(x0, x1);
                 if (xR < left || xL > left + width) continue;
@@ -286,6 +298,7 @@ export default function LiveChart() {
                 ctx.beginPath(); ctx.moveTo(xR, top); ctx.lineTo(xR, top + height); ctx.stroke();
                 ctx.setLineDash([]);
               } else {
+                const x0 = u.valToPos(mTs, 'x', true);
                 if (x0 < left || x0 > left + width) continue;
                 ctx.strokeStyle = color;
                 ctx.lineWidth = 1.5;
@@ -298,6 +311,23 @@ export default function LiveChart() {
                 ctx.closePath(); ctx.fill();
               }
             }
+
+            // Draw gap indicators when dead time is hidden
+            if (gd && gd.gapPositions.length > 0) {
+              ctx.setLineDash([2, 3]);
+              ctx.strokeStyle = 'rgba(166, 173, 200, 0.35)';
+              ctx.lineWidth = 1;
+              for (const gapTs of gd.gapPositions) {
+                const x = u.valToPos(gapTs, 'x', true);
+                if (x < left || x > left + width) continue;
+                ctx.beginPath();
+                ctx.moveTo(x, top);
+                ctx.lineTo(x, top + height);
+                ctx.stroke();
+              }
+              ctx.setLineDash([]);
+            }
+
             ctx.restore();
           },
         ],
@@ -314,13 +344,19 @@ export default function LiveChart() {
               u.setSelect({ left: 0, width: 0, top: 0, height: 0 }, false);
               return;
             }
-            const t0 = u.posToVal(sel.left, 'x');
-            const t1 = u.posToVal(sel.left + sel.width, 'x');
+            let t0 = u.posToVal(sel.left, 'x');
+            let t1 = u.posToVal(sel.left + sel.width, 'x');
+            // Convert compressed chart coords back to real timestamps
+            const gd = gapDataRef.current;
+            if (gd) {
+              t0 = compressedToReal(t0, gd.gapPositions, gd.cumulativeOffsets);
+              t1 = compressedToReal(t1, gd.gapPositions, gd.cumulativeOffsets);
+            }
             setSelectionRange([t0, t1]);
             const { ts, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
             let sum = 0, mn = Infinity, mx = -Infinity, cnt = 0;
             for (let i = 0; i < ts.length; i++) {
-              if (ts[i] >= t0 && ts[i] <= t1) {
+              if (ts[i] >= t0 && ts[i] <= t1 && isFinite(amps[i])) {
                 sum += amps[i]; mn = Math.min(mn, amps[i]); mx = Math.max(mx, amps[i]); cnt++;
               }
             }
@@ -360,13 +396,19 @@ export default function LiveChart() {
       if (markerPopupOpenRef.current) return;
       const sel = u.select;
       const containerRect = containerRef.current!.getBoundingClientRect();
+      const gd = gapDataRef.current;
       if (sel.width > 4) {
-        const t0 = u.posToVal(sel.left, 'x');
-        const t1 = u.posToVal(sel.left + sel.width, 'x');
+        let t0 = u.posToVal(sel.left, 'x');
+        let t1 = u.posToVal(sel.left + sel.width, 'x');
+        if (gd) {
+          t0 = compressedToReal(t0, gd.gapPositions, gd.cumulativeOffsets);
+          t1 = compressedToReal(t1, gd.gapPositions, gd.cumulativeOffsets);
+        }
         setMarkerPopup({ x: containerRect.width / 2, y: 80, ts: t0, tsEnd: t1 });
       } else {
-        const ts = cursorTsRef.current;
+        let ts = cursorTsRef.current;
         if (ts == null) return;
+        if (gd) ts = compressedToReal(ts, gd.gapPositions, gd.cumulativeOffsets);
         setMarkerPopup({ x: containerRect.width / 2, y: 80, ts });
       }
       setMarkerLabel('');
@@ -396,21 +438,33 @@ export default function LiveChart() {
     if (!ctx) return;
     const pxW = canvas.width;
     const pxH = canvas.height;
-    const { ts, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
-    const n = ts.length;
+    const { ts: rawTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+    const n = rawTs.length;
 
     ctx.fillStyle = MINIMAP_BG;
     ctx.fillRect(0, 0, pxW, pxH);
 
     if (n < 2) return;
+
+    // Apply gap compression if enabled
+    const hdt = useAppStore.getState().settings.hideDeadTime;
+    let ts = rawTs;
+    let gd: GapCompressionResult | null = null;
+    if (hdt) {
+      gd = compressGaps(rawTs, amps);
+      ts = gd.compressedTs;
+    }
+
     const tMin = ts[0];
     const tMax = ts[n - 1];
     const tRange = tMax - tMin || 1;
 
     for (const m of markersRef.current) {
       if (m.endTimestamp == null) continue;
-      const x0 = ((m.timestamp - tMin) / tRange) * pxW;
-      const x1 = ((m.endTimestamp - tMin) / tRange) * pxW;
+      const mTs = gd ? realToCompressed(m.timestamp, gd.gapPositions, gd.cumulativeOffsets) : m.timestamp;
+      const mEnd = gd ? realToCompressed(m.endTimestamp, gd.gapPositions, gd.cumulativeOffsets) : m.endTimestamp;
+      const x0 = ((mTs - tMin) / tRange) * pxW;
+      const x1 = ((mEnd - tMin) / tRange) * pxW;
       ctx.fillStyle = colorWithAlpha(m.color || '#cba6f7', 0.25);
       ctx.fillRect(x0, 0, x1 - x0, pxH);
     }
@@ -441,9 +495,22 @@ export default function LiveChart() {
     }
     ctx.stroke();
 
+    // Draw gap indicators on minimap
+    if (gd && gd.gapPositions.length > 0) {
+      ctx.setLineDash([2, 2]);
+      ctx.strokeStyle = 'rgba(166, 173, 200, 0.25)';
+      ctx.lineWidth = 1;
+      for (const gapTs of gd.gapPositions) {
+        const x = ((gapTs - tMin) / tRange) * pxW;
+        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, pxH); ctx.stroke();
+      }
+      ctx.setLineDash([]);
+    }
+
     for (const m of markersRef.current) {
       if (m.endTimestamp != null) continue;
-      const x = ((m.timestamp - tMin) / tRange) * pxW;
+      const mTs = gd ? realToCompressed(m.timestamp, gd.gapPositions, gd.cumulativeOffsets) : m.timestamp;
+      const x = ((mTs - tMin) / tRange) * pxW;
       ctx.strokeStyle = m.color || '#cba6f7';
       ctx.lineWidth = 1;
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, pxH); ctx.stroke();
@@ -467,8 +534,15 @@ export default function LiveChart() {
     if (!canvas || !u) return;
     const rect = canvas.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (clientX - rect.left) / rect.width));
-    const { ts } = getOrderedSlice(useAppStore.getState().sampleBuffer);
-    if (ts.length < 2) return;
+    const { ts: rawTs, amps } = getOrderedSlice(useAppStore.getState().sampleBuffer);
+    if (rawTs.length < 2) return;
+    // Use compressed timestamps if hideDeadTime is on
+    const hdt = useAppStore.getState().settings.hideDeadTime;
+    let ts = rawTs;
+    if (hdt) {
+      const gd = compressGaps(rawTs, amps);
+      ts = gd.compressedTs;
+    }
     const tMin = ts[0], tMax = ts[ts.length - 1];
     const center = tMin + pct * (tMax - tMin);
     const vp = viewportRef.current;
@@ -496,12 +570,22 @@ export default function LiveChart() {
     if (!u) return;
 
     const store = useAppStore.getState();
-    const { ts: rawTs, amps: rawAmps } = getOrderedSlice(store.sampleBuffer);
-    const n = rawTs.length;
+    const { ts: rawTsOrig, amps: rawAmps } = getOrderedSlice(store.sampleBuffer);
+    const n = rawTsOrig.length;
 
     // If buffer is empty, do nothing — keep whatever is on screen until data arrives.
     // The clearGeneration effect handles explicit clears separately.
     if (n === 0) return;
+
+    // Apply gap compression if hideDeadTime is enabled
+    let rawTs = rawTsOrig;
+    if (hideDeadTime) {
+      const gd = compressGaps(rawTsOrig, rawAmps);
+      rawTs = gd.compressedTs;
+      gapDataRef.current = gd;
+    } else {
+      gapDataRef.current = null;
+    }
 
     // When live (not paused): slice to the time window (last N seconds).
     // When paused: feed ALL data so the user can scroll anywhere via minimap.
@@ -670,7 +754,7 @@ export default function LiveChart() {
     }
 
     drawMinimap();
-  }, [paused, timeWindowS, yAutoScale, yMin, yMax, setViewStats, drawMinimap]);
+  }, [paused, timeWindowS, yAutoScale, yMin, yMax, setViewStats, drawMinimap, hideDeadTime]);
 
   // ── Animation loop — only runs when on monitor view ───────────────────────
 
@@ -719,7 +803,16 @@ export default function LiveChart() {
   const navigateTo = useAppStore((s) => s.navigateTo);
   useEffect(() => {
     if (!navigateTo) return;
-    viewportRef.current = [navigateTo.tMin, navigateTo.tMax];
+    // Convert real timestamps to compressed space if hideDeadTime is on
+    const gd = gapDataRef.current;
+    if (gd) {
+      viewportRef.current = [
+        realToCompressed(navigateTo.tMin, gd.gapPositions, gd.cumulativeOffsets),
+        realToCompressed(navigateTo.tMax, gd.gapPositions, gd.cumulativeOffsets),
+      ];
+    } else {
+      viewportRef.current = [navigateTo.tMin, navigateTo.tMax];
+    }
     useAppStore.getState().clearNavigateTo();
     // Render immediately so chart + minimap jump to the marker
     requestAnimationFrame(() => renderFrame());
@@ -766,8 +859,11 @@ export default function LiveChart() {
     const rect = u.over.getBoundingClientRect();
     const px = e.clientX - rect.left;
     if (px < 0 || px > rect.width) return;
-    const ts = u.posToVal(px, 'x');
-    if (!isFinite(ts)) return;
+    const chartTs = u.posToVal(px, 'x');
+    if (!isFinite(chartTs)) return;
+    // Convert to real timestamp for marker hit-testing
+    const gd = gapDataRef.current;
+    const realTs = gd ? compressedToReal(chartTs, gd.gapPositions, gd.cumulativeOffsets) : chartTs;
 
     const sel = u.select;
 
@@ -788,7 +884,7 @@ export default function LiveChart() {
 
     // Hit-test saved range markers → load their stats as selection
     const hit = markersRef.current.find(
-      (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
+      (m) => m.endTimestamp != null && realTs >= m.timestamp && realTs <= m.endTimestamp,
     );
     if (hit) {
       setSelectionRange([hit.timestamp, hit.endTimestamp!]);
@@ -826,8 +922,11 @@ export default function LiveChart() {
     const rect = u.over.getBoundingClientRect();
     const px = e.clientX - rect.left;
     if (px < 0 || px > rect.width) return;
-    const ts = u.posToVal(px, 'x');
-    if (!isFinite(ts)) return;
+    const chartTs = u.posToVal(px, 'x');
+    if (!isFinite(chartTs)) return;
+    // Convert to real timestamp for marker hit-testing and creation
+    const gd = gapDataRef.current;
+    const realTs = gd ? compressedToReal(chartTs, gd.gapPositions, gd.cumulativeOffsets) : chartTs;
 
     const containerRect = containerRef.current!.getBoundingClientRect();
     const popX = e.clientX - containerRect.left;
@@ -841,8 +940,12 @@ export default function LiveChart() {
       setMarkerCategory('note');
       setMarkerColor('');
       setMarkerError(false);
-      const t0 = u.posToVal(sel.left, 'x');
-      const t1 = u.posToVal(sel.left + sel.width, 'x');
+      let t0 = u.posToVal(sel.left, 'x');
+      let t1 = u.posToVal(sel.left + sel.width, 'x');
+      if (gd) {
+        t0 = compressedToReal(t0, gd.gapPositions, gd.cumulativeOffsets);
+        t1 = compressedToReal(t1, gd.gapPositions, gd.cumulativeOffsets);
+      }
       setMarkerPopup({ x: popX, y: popY, ts: t0, tsEnd: t1 });
       setTimeout(() => markerInputRef.current?.focus(), 50);
       return;
@@ -850,12 +953,14 @@ export default function LiveChart() {
 
     // Hit-test existing markers (range + point) → open EDIT mode
     const hitRange = markersRef.current.find(
-      (m) => m.endTimestamp != null && ts >= m.timestamp && ts <= m.endTimestamp,
+      (m) => m.endTimestamp != null && realTs >= m.timestamp && realTs <= m.endTimestamp,
     );
     const hitPoint = !hitRange ? markersRef.current.find((m) => {
       if (m.endTimestamp != null) return false;
-      const mx = u.valToPos(m.timestamp, 'x', true);
-      const clickX = u.valToPos(ts, 'x', true);
+      // Convert marker timestamp to chart space for pixel comparison
+      const mTs = gd ? realToCompressed(m.timestamp, gd.gapPositions, gd.cumulativeOffsets) : m.timestamp;
+      const mx = u.valToPos(mTs, 'x', true);
+      const clickX = u.valToPos(chartTs, 'x', true);
       return Math.abs(mx - clickX) < 8; // 8px tolerance
     }) : null;
     const hit = hitRange || hitPoint;
@@ -871,13 +976,13 @@ export default function LiveChart() {
       return;
     }
 
-    // Empty area → new point marker
+    // Empty area → new point marker (use real timestamp)
     setMarkerLabel('');
     setMarkerNote('');
     setMarkerCategory('note');
     setMarkerColor('');
     setMarkerError(false);
-    setMarkerPopup({ x: popX, y: popY, ts });
+    setMarkerPopup({ x: popX, y: popY, ts: realTs });
     setTimeout(() => markerInputRef.current?.focus(), 50);
   }, []);
 

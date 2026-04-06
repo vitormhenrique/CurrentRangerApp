@@ -36,6 +36,8 @@ pub struct AppSettings {
     pub voltage_v: f64,
     pub logging_format: LoggingFormat,
     pub time_window_s: f64,
+    #[serde(default)]
+    pub hide_dead_time: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -125,6 +127,7 @@ mod tests {
                 voltage_v: 3.3,
                 logging_format: LoggingFormat::Exponent,
                 time_window_s: 30.0,
+                hide_dead_time: false,
             },
             session: SessionData {
                 samples: vec![

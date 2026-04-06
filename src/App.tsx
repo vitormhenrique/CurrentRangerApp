@@ -1,7 +1,7 @@
 // src/App.tsx — Root layout component
 
 import { type ReactNode } from 'react';
-import { LineChart, Settings, Terminal } from 'lucide-react';
+import { LineChart, Settings, Terminal, SlidersHorizontal } from 'lucide-react';
 import { useAppStore, selectIsConnected, selectDeviceStatus } from './store';
 import clsx from 'clsx';
 
@@ -15,6 +15,7 @@ import WorkspacePanel from './components/WorkspacePanel';
 import IntegrationPanel from './components/IntegrationPanel';
 import StatusBar from './components/StatusBar';
 import DebugConsole from './components/DebugConsole';
+import AppSettingsView from './components/AppSettings';
 
 export default function App() {
   const {
@@ -40,7 +41,7 @@ export default function App() {
     label,
     icon,
   }: {
-    view: 'monitor' | 'device-config' | 'debug';
+    view: 'monitor' | 'device-config' | 'debug' | 'settings';
     label: string;
     icon: ReactNode;
   }) => (
@@ -77,6 +78,7 @@ export default function App() {
           <NavTab view="monitor" label="Monitor" icon={<LineChart size={14} />} />
           <NavTab view="device-config" label="Device Config" icon={<Settings size={14} />} />
           <NavTab view="debug" label="Console" icon={<Terminal size={14} />} />
+          <NavTab view="settings" label="Settings" icon={<SlidersHorizontal size={14} />} />
         </nav>
 
         <div className="flex-1" />
@@ -154,6 +156,9 @@ export default function App() {
       </div>
       <div className={clsx('flex-1 overflow-hidden', currentView !== 'debug' && 'hidden')}>
         <DebugConsole />
+      </div>
+      <div className={clsx('flex-1 overflow-hidden', currentView !== 'settings' && 'hidden')}>
+        <AppSettingsView />
       </div>
 
       {/* Status bar */}
