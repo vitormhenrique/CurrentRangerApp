@@ -27,17 +27,17 @@ Built with **Rust + Tauri v2**, **React + TypeScript**, and **uPlot** for high-p
 
 ## Pages
 
-- [Getting Started]({% link Getting-Started.md %})
-- [Connecting to a Device]({% link Connecting.md %})
-- [Live Chart]({% link Live-Chart.md %})
-- [Markers and Annotations]({% link Markers.md %})
-- [Charge and Energy Integration]({% link Integration.md %})
-- [Battery Tools]({% link Battery-Tools.md %})
-- [Device Configuration]({% link Device-Config.md %})
-- [Workspaces and Export]({% link Workspaces.md %})
-- [Console]({% link Console.md %})
-- [Mock Device for Testing]({% link Mock-Device.md %})
-- [Keyboard Shortcuts]({% link Keyboard-Shortcuts.md %})
+- [Getting Started]({{ "Getting-Started/" | relative_url }})
+- [Connecting to a Device]({{ "Connecting/" | relative_url }})
+- [Live Chart]({{ "Live-Chart/" | relative_url }})
+- [Markers and Annotations]({{ "Markers/" | relative_url }})
+- [Charge and Energy Integration]({{ "Integration/" | relative_url }})
+- [Battery Tools]({{ "Battery-Tools/" | relative_url }})
+- [Device Configuration]({{ "Device-Config/" | relative_url }})
+- [Workspaces and Export]({{ "Workspaces/" | relative_url }})
+- [Console]({{ "Console/" | relative_url }})
+- [Mock Device for Testing]({{ "Mock-Device/" | relative_url }})
+- [Keyboard Shortcuts]({{ "Keyboard-Shortcuts/" | relative_url }})
 
 ## Links
 
