@@ -38,6 +38,40 @@ jobs:
                   sudo apt-get update
                   sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf libudev-dev
 
+            - name: Import Apple certificate (macOS)
+              if: matrix.platform == 'macos-latest'
+              env:
+                  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+                  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+                  KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+              run: |
+                  echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
+
+                  KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+                  security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+                  security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
+                  security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+
+                  security import certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" \
+                    -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
+                  security set-key-partition-list -S apple-tool:,apple: \
+                    -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
+                  security list-keychain -d user -s "$KEYCHAIN_PATH"
+
+                  rm certificate.p12
+
+            - name: Write Apple API key to file (macOS)
+              if: matrix.platform == 'macos-latest'
+              env:
+                  APPLE_API_KEY_P8_BASE64: ${{ secrets.APPLE_API_KEY_P8_BASE64 }}
+                  APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+              run: |
+                  mkdir -p "$RUNNER_TEMP/apple-keys"
+                  KEY_PATH="$RUNNER_TEMP/apple-keys/AuthKey_${APPLE_API_KEY}.p8"
+                  echo "$APPLE_API_KEY_P8_BASE64" | base64 --decode > "$KEY_PATH"
+                  # Export the path for subsequent steps (avoids inlining secrets in YAML expressions)
+                  echo "APPLE_API_KEY_PATH=$KEY_PATH" >> "$GITHUB_ENV"
+
             - name: Setup Node.js
               uses: actions/setup-node@v4
               with:
@@ -61,6 +95,15 @@ jobs:
               uses: tauri-apps/tauri-action@v0
               env:
                   GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  # macOS code signing
+                  APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+                  APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+                  APPLE_SIGNING_IDENTITY: ${{ secrets.APPLE_SIGNING_IDENTITY }}
+                  APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+                  # macOS notarization via App Store Connect API
+                  APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+                  APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+                  # APPLE_API_KEY_PATH is set via GITHUB_ENV in the previous step
               with:
                   tagName: ${{ github.ref_name }}
                   releaseName: "CurrentRanger ${{ github.ref_name }}"
@@ -68,3 +111,10 @@ jobs:
                   releaseDraft: true
                   prerelease: false
                   args: ${{ matrix.args }}
+
+            - name: Cleanup keychain (macOS)
+              if: matrix.platform == 'macos-latest' && always()
+              run: |
+                  KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
+                  security delete-keychain "$KEYCHAIN_PATH" 2>/dev/null || true
+                  rm -rf "$RUNNER_TEMP/apple-keys" 2>/dev/null || true

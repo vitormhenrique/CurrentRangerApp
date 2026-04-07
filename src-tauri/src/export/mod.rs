@@ -41,6 +41,11 @@ pub fn export_csv(
     let t0 = samples.first().map(|s| s.t).unwrap_or(0.0);
     for s in samples {
         let elapsed = s.t - t0;
+        if !s.a.is_finite() {
+            // NaN gap sentinel — write empty current fields to preserve the time break
+            writeln!(f, "{:.6},{:.6},,,,", s.t, elapsed)?;
+            continue;
+        }
         let ma = s.a * 1e3;
         let ua = s.a * 1e6;
         let na = s.a * 1e9;

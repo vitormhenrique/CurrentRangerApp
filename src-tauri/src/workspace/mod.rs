@@ -16,6 +16,30 @@ use std::path::Path;
 
 pub const CURRENT_SCHEMA_VERSION: u32 = 1;
 
+/// Custom serializer: writes NaN as JSON null, finite values normally.
+mod nan_as_null {
+    use serde::{self, Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S>(value: &f64, serializer: S) -> Result<S::Ok, S::Error>
+    where
+        S: Serializer,
+    {
+        if value.is_finite() {
+            serializer.serialize_f64(*value)
+        } else {
+            serializer.serialize_none()
+        }
+    }
+
+    pub fn deserialize<'de, D>(deserializer: D) -> Result<f64, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        let opt: Option<f64> = Option::deserialize(deserializer)?;
+        Ok(opt.unwrap_or(f64::NAN))
+    }
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Workspace data model
 // ─────────────────────────────────────────────────────────────────────────────
@@ -53,6 +77,8 @@ pub struct SessionData {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SampleRecord {
     pub t: f64,
+    /// Current in amps. NaN indicates a gap sentinel (serialized as null).
+    #[serde(with = "nan_as_null")]
     pub a: f64,
 }
 
@@ -182,5 +208,36 @@ mod tests {
         std::fs::write(&path, json).unwrap();
 
         assert!(load_workspace(&path).is_err());
+    }
+
+    #[test]
+    fn test_nan_gap_sentinel_round_trip() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("gaps.crws");
+        let mut ws = make_workspace();
+        // Add a NaN gap sentinel between measurements
+        ws.session.samples = vec![
+            SampleRecord { t: 0.0, a: 1e-3 },
+            SampleRecord { t: 1.0, a: 2e-3 },
+            SampleRecord { t: 1.0001, a: f64::NAN },
+            SampleRecord { t: 5.0, a: 3e-3 },
+        ];
+
+        save_workspace(&ws, &path).unwrap();
+        let loaded = load_workspace(&path).unwrap();
+
+        assert_eq!(loaded.session.samples.len(), 4);
+        assert!((loaded.session.samples[0].a - 1e-3).abs() < 1e-12);
+        assert!((loaded.session.samples[1].a - 2e-3).abs() < 1e-12);
+        assert!(loaded.session.samples[2].a.is_nan()); // NaN preserved
+        assert!((loaded.session.samples[3].a - 3e-3).abs() < 1e-12);
+    }
+
+    #[test]
+    fn test_nan_serializes_as_null() {
+        let rec = SampleRecord { t: 1.0, a: f64::NAN };
+        let json = serde_json::to_string(&rec).unwrap();
+        assert!(json.contains("null"), "NaN should serialize as null, got: {}", json);
+        assert!(!json.contains("NaN"), "should not contain NaN string");
     }
 }

@@ -31,23 +31,31 @@ export function compressGaps(ts: Float64Array, amps: Float64Array): GapCompressi
 
   for (let i = 0; i < n; i++) {
     if (!isFinite(amps[i])) {
-      // NaN gap sentinel — compute gap duration to remove
+      // NaN gap sentinel — find the full extent of this NaN run
       const prevRealTs = i > 0 ? ts[i - 1] : ts[i];
-      // Find next real (non-NaN) sample
       let nextIdx = i + 1;
       while (nextIdx < n && !isFinite(amps[nextIdx])) nextIdx++;
+
+      // Compressed position of the gap boundary (before adding new offset)
+      const gapCompressedPos = prevRealTs - cumOffset;
 
       if (nextIdx < n) {
         const gapDuration = ts[nextIdx] - prevRealTs;
         if (gapDuration > 0) {
           cumOffset += gapDuration;
-          // Record gap position in compressed coordinate space
-          gapPositions.push(prevRealTs - (cumOffset - gapDuration));
+          gapPositions.push(gapCompressedPos);
           cumulativeOffsets.push(cumOffset);
         }
       }
-      // Write the NaN sample with compressed timestamp
-      compressedTs[i] = ts[i] - cumOffset;
+
+      // Set all NaN samples in this run to the gap boundary position
+      // so that timestamp monotonicity is preserved for uPlot
+      const end = Math.min(nextIdx, n);
+      for (let j = i; j < end; j++) {
+        compressedTs[j] = gapCompressedPos;
+      }
+      // Skip past the entire NaN run (loop increment handles +1)
+      i = end - 1;
       continue;
     }
     compressedTs[i] = ts[i] - cumOffset;
@@ -72,7 +80,7 @@ export function realToCompressed(
   let offset = 0;
   for (let i = 0; i < cumulativeOffsets.length; i++) {
     const realGapBoundary = gapPositions[i] + cumulativeOffsets[i];
-    if (realTs > realGapBoundary) {
+    if (realTs >= realGapBoundary) {
       offset = cumulativeOffsets[i];
     } else {
       break;

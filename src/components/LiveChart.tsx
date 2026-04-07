@@ -186,9 +186,13 @@ export default function LiveChart() {
           grid: { stroke: GRID_COLOR, width: 0.5 },
           ticks: { stroke: GRID_COLOR, width: 0.5 },
           values: (_u, vals) =>
-            vals.map((v) =>
-              v == null ? '' : formatLocalTime(v),
-            ),
+            vals.map((v) => {
+              if (v == null) return '';
+              // Convert compressed timestamps back to real wall-clock time for display
+              const gd = gapDataRef.current;
+              const real = gd ? compressedToReal(v, gd.gapPositions, gd.cumulativeOffsets) : v;
+              return formatLocalTime(real);
+            }),
         },
         {
           stroke: TICK_COLOR,

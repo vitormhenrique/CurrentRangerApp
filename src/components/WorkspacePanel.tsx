@@ -10,7 +10,7 @@ import { logger } from '../lib/logger';
 const SRC = 'Workspace';
 
 export default function WorkspacePanel() {
-  const { settings, markers, appendStatusLog, loadSamplesFromBackend, setMarkers, setSettings } =
+  const { settings, markers, appendStatusLog, loadSamplesFromBackend, setMarkers, setSettings, setPaused, setCurrentView } =
     useAppStore();
   const [busy, setBusy] = useState(false);
 
@@ -39,10 +39,14 @@ export default function WorkspacePanel() {
       const path = await pickOpenWorkspace();
       if (!path) return;
       logger.info(SRC, `Loading workspace from ${path}`);
+      // Pause chart before loading to prevent render loop from thrashing
+      setPaused(true);
       const result = await api.loadWorkspace(path);
       loadSamplesFromBackend(result.timestamps, result.amps);
       setMarkers(result.markers);
       setSettings(result.appSettings);
+      // Switch to monitor view so the user sees the loaded data
+      setCurrentView('monitor');
       logger.info(SRC, `Workspace loaded: ${result.sampleCount} samples, ${result.markers.length} markers`);
       appendStatusLog(`Workspace loaded: ${path} (${result.sampleCount} samples)`);
     });

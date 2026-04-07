@@ -1,6 +1,7 @@
 // src/store/index.ts — Zustand global store for all application state
 
 import { create } from 'zustand';
+import { invoke } from '@tauri-apps/api/core';
 import {
   AppSettings,
   ConnectionStatus,
@@ -214,6 +215,8 @@ export const useAppStore = create<AppStore>((set, get) => ({
       // Push a NaN amps value at a tiny offset after the last timestamp.
       // uPlot's spanGaps:false will break the line at this point.
       pushSample(state.sampleBuffer, lastTs + 0.0001, NaN);
+      // Also push the gap sentinel to the backend store so exports/saves preserve it
+      invoke('mark_new_acquisition').catch(() => {});
     }
   },
 

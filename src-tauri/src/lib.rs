@@ -48,6 +48,7 @@ pub fn run() {
             get_samples,
             get_stats,
             clear_samples,
+            mark_new_acquisition,
             save_workspace,
             load_workspace,
             export_csv,
