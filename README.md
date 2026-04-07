@@ -2,7 +2,9 @@
 
 [![Release](https://github.com/vitormhenrique/CurrentRangerApp/actions/workflows/release.yml/badge.svg)](https://github.com/vitormhenrique/CurrentRangerApp/actions/workflows/release.yml)
 [![Latest Release](https://img.shields.io/github/v/release/vitormhenrique/CurrentRangerApp?include_prereleases)](https://github.com/vitormhenrique/CurrentRangerApp/releases)
-[![License](https://img.shields.io/github/license/vitormhenrique/CurrentRangerApp)](LICENSE)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Docs](https://img.shields.io/badge/Docs-vitormhenrique.github.io-blue?logo=github)](https://vitormhenrique.github.io/CurrentRangerApp/)
+[![Buy Me A Coffee](https://img.shields.io/badge/Buy%20Me%20A%20Coffee-support-orange?logo=buy-me-a-coffee&logoColor=white)](https://buymeacoffee.com/vitormhenrique)
 
 A modern cross-platform desktop application for managing and analyzing data from a [LowPowerLab CurrentRanger](https://lowpowerlab.com/currentranger) precision current meter.
 
@@ -49,11 +51,7 @@ Download the latest release for your platform from the [Releases page](https://g
 
 1. Open the `.dmg` file
 2. Drag **CurrentRanger** into your Applications folder
-3. The app is not yet signed with an Apple Developer certificate, so macOS will block it. After copying to Applications, run:
-```bash
-xattr -cr /Applications/CurrentRanger.app
-```
-4. Launch the app normally. If macOS still shows a warning, right-click the app and select **Open**, then click **Open** in the dialog
+3. Launch the app normally
 
 ### Windows
 
