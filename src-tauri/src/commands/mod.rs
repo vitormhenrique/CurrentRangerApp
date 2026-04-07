@@ -135,6 +135,18 @@ pub async fn clear_samples(state: State<'_, AppState>) -> Result<(), String> {
     Ok(())
 }
 
+#[tauri::command]
+pub async fn mark_new_acquisition(state: State<'_, AppState>) -> Result<(), String> {
+    let mut store = state.store.lock().unwrap();
+    if let Some(&last_ts) = store.timestamps.last() {
+        store.timestamps.push(last_ts + 0.0001);
+        store.amps.push(f64::NAN);
+        store.total_pushed += 1;
+        log::debug!("mark_new_acquisition: inserted NaN gap sentinel after ts={}", last_ts);
+    }
+    Ok(())
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
 // Workspace
 // ─────────────────────────────────────────────────────────────────────────────

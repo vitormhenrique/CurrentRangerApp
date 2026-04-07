@@ -84,6 +84,10 @@ export const api = {
     logger.info(SRC, 'clearSamples() → done');
   },
 
+  async markNewAcquisition(): Promise<void> {
+    await invoke('mark_new_acquisition');
+  },
+
   async saveWorkspace(
     path: string,
     appSettings: AppSettings,

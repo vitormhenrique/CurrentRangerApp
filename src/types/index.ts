@@ -110,6 +110,7 @@ export interface AppSettings {
   voltageV: number;
   loggingFormat: LoggingFormat;
   timeWindowS: number;
+  hideDeadTime: boolean;
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
